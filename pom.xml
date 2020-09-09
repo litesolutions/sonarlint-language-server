@@ -9,7 +9,7 @@
   </parent>
   <groupId>org.sonarsource.sonarlint.ls</groupId>
   <artifactId>sonarlint-language-server</artifactId>
-  <version>1.5-SNAPSHOT</version>
+  <version>1.5-lite</version>
   <packaging>jar</packaging>
   <name>SonarLint Language Server</name>
   <description>SonarLint Language Server</description>
@@ -23,7 +23,7 @@
   </issueManagement>
 
   <properties>
-    <sonarlint.core.version>4.13.0.19712</sonarlint.core.version>
+    <sonarlint.core.version>4.13.0.19712-lite</sonarlint.core.version>
     <!-- analyzers used for tests -->
     <sonar.java.version>6.5.0.22421</sonar.java.version>
     <sonar.javascript.version>6.2.1.12157</sonar.javascript.version>

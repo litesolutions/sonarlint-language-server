@@ -109,6 +109,10 @@ public class DefaultClientInputFile implements ClientInputFile {
       case "typescript":
       case "typescriptreact":
         return "ts";
+      case "objectscript-class":
+    	  return "objectscript";
+      case "objectscript":
+    	  return "objectscript";  
       case "html":
         return "web";
       case "oraclesql":

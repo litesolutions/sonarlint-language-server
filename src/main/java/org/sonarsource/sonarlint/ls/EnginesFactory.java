@@ -51,7 +51,8 @@ public class EnginesFactory {
     Language.JS,
     Language.PHP,
     Language.PYTHON,
-    Language.TS
+    Language.TS,
+    Language.OBJECTSCRIPT
   };
 
   private static final Language[] CONNECTED_ADDITIONAL_LANGUAGES = {

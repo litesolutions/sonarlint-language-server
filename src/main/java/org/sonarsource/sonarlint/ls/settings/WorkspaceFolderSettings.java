@@ -1,6 +1,6 @@
 /*
  * SonarLint Language Server
- * Copyright (C) 2009-2021 SonarSource SA
+ * Copyright (C) 2009-2023 SonarSource SA
  * mailto:info AT sonarsource DOT com
  *
  * This program is free software; you can redistribute it and/or
@@ -44,12 +44,15 @@ public class WorkspaceFolderSettings {
   private final PathMatcher testMatcher;
   private final String connectionId;
   private final String projectKey;
+  private final String pathToCompileCommands;
 
-  public WorkspaceFolderSettings(@Nullable String connectionId, @Nullable String projectKey, Map<String, String> analyzerProperties, @Nullable String testFilePattern) {
+  public WorkspaceFolderSettings(@Nullable String connectionId, @Nullable String projectKey, Map<String, String> analyzerProperties, @Nullable String testFilePattern,
+    @Nullable String pathToCompileCommands) {
     this.connectionId = connectionId;
     this.projectKey = projectKey;
     this.analyzerProperties = analyzerProperties;
     this.testFilePattern = testFilePattern;
+    this.pathToCompileCommands = pathToCompileCommands;
     this.testMatcher = testFilePattern != null ? FileSystems.getDefault().getPathMatcher("glob:" + testFilePattern) : (p -> false);
   }
 
@@ -59,6 +62,11 @@ public class WorkspaceFolderSettings {
 
   public PathMatcher getTestMatcher() {
     return testMatcher;
+  }
+
+  @CheckForNull
+  public String getPathToCompileCommands() {
+    return pathToCompileCommands;
   }
 
   @CheckForNull
@@ -77,7 +85,7 @@ public class WorkspaceFolderSettings {
 
   @Override
   public int hashCode() {
-    return Objects.hash(connectionId, projectKey, analyzerProperties, testFilePattern);
+    return Objects.hash(connectionId, projectKey, analyzerProperties, testFilePattern, pathToCompileCommands);
   }
 
   @Override
@@ -91,9 +99,9 @@ public class WorkspaceFolderSettings {
     if (getClass() != obj.getClass()) {
       return false;
     }
-    WorkspaceFolderSettings other = (WorkspaceFolderSettings) obj;
+    var other = (WorkspaceFolderSettings) obj;
     return Objects.equals(connectionId, other.connectionId) && Objects.equals(projectKey, other.projectKey) && Objects.equals(analyzerProperties, other.analyzerProperties)
-      && Objects.equals(testFilePattern, other.testFilePattern);
+      && Objects.equals(testFilePattern, other.testFilePattern) && Objects.equals(pathToCompileCommands, other.pathToCompileCommands);
   }
 
   @Override

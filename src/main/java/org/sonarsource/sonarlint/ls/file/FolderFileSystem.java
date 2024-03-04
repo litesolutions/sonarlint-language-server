@@ -1,6 +1,6 @@
 /*
  * SonarLint Language Server
- * Copyright (C) 2009-2021 SonarSource SA
+ * Copyright (C) 2009-2023 SonarSource SA
  * mailto:info AT sonarsource DOT com
  *
  * This program is free software; you can redistribute it and/or
@@ -25,14 +25,14 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.stream.Stream;
 import org.sonar.api.batch.fs.InputFile;
-import org.sonarsource.sonarlint.core.client.api.common.ClientFileSystem;
-import org.sonarsource.sonarlint.core.client.api.common.analysis.ClientInputFile;
+import org.sonarsource.sonarlint.core.analysis.api.ClientInputFile;
+import org.sonarsource.sonarlint.core.analysis.api.ClientModuleFileSystem;
 import org.sonarsource.sonarlint.ls.folders.InFolderClientInputFile;
 import org.sonarsource.sonarlint.ls.folders.WorkspaceFolderWrapper;
 import org.sonarsource.sonarlint.ls.java.JavaConfigCache;
 import org.sonarsource.sonarlint.ls.settings.WorkspaceFolderSettings;
 
-public class FolderFileSystem implements ClientFileSystem {
+public class FolderFileSystem implements ClientModuleFileSystem {
   private final JavaConfigCache javaConfigCache;
   private final FileTypeClassifier fileTypeClassifier;
   private final WorkspaceFolderWrapper folder;
@@ -45,7 +45,7 @@ public class FolderFileSystem implements ClientFileSystem {
 
   @Override
   public Stream<ClientInputFile> files(String suffix, InputFile.Type type) {
-    WorkspaceFolderSettings settings = folder.getSettings();
+    var settings = folder.getSettings();
     try {
       return Files.walk(folder.getRootPath())
         .filter(Files::isRegularFile)
@@ -59,11 +59,11 @@ public class FolderFileSystem implements ClientFileSystem {
 
   @Override
   public Stream<ClientInputFile> files() {
-    WorkspaceFolderSettings settings = folder.getSettings();
+    var settings = folder.getSettings();
     try {
       return Files.walk(folder.getRootPath())
         .filter(Files::isRegularFile)
-        .map(filePath -> toClientInputFile(filePath, isTestFile(settings, filePath.toUri()) ? InputFile.Type.TEST : InputFile.Type.MAIN));
+        .map(filePath -> toClientInputFile(filePath, getInputFileType(settings, filePath)));
     } catch (IOException e) {
       throw new IllegalStateException("Cannot browse the files", e);
     }
@@ -73,8 +73,12 @@ public class FolderFileSystem implements ClientFileSystem {
     return isTestType(type) == isTestFile(settings, uri);
   }
 
+  private InputFile.Type getInputFileType(WorkspaceFolderSettings settings, Path filePath) {
+    return isTestFile(settings, filePath.toUri()) ? InputFile.Type.TEST : InputFile.Type.MAIN;
+  }
+
   private boolean isTestFile(WorkspaceFolderSettings settings, URI fileUri) {
-    return fileTypeClassifier.isTest(settings, fileUri, javaConfigCache.getOrFetch(fileUri));
+    return fileTypeClassifier.isTest(settings, fileUri, false, () -> javaConfigCache.getOrFetch(fileUri));
   }
 
   private static boolean isTestType(InputFile.Type type) {

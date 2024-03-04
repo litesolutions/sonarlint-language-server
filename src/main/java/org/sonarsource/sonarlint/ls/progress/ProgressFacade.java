@@ -1,6 +1,6 @@
 /*
  * SonarLint Language Server
- * Copyright (C) 2009-2021 SonarSource SA
+ * Copyright (C) 2009-2023 SonarSource SA
  * mailto:info AT sonarsource DOT com
  *
  * This program is free software; you can redistribute it and/or
@@ -22,14 +22,14 @@ package org.sonarsource.sonarlint.ls.progress;
 import java.util.function.Consumer;
 import javax.annotation.CheckForNull;
 import javax.annotation.Nullable;
-import org.sonarsource.sonarlint.core.client.api.common.ProgressMonitor;
+import org.sonarsource.sonarlint.core.commons.progress.ClientProgressMonitor;
 
 public interface ProgressFacade {
 
   void end(@Nullable String message);
 
   @CheckForNull
-  ProgressMonitor asCoreMonitor();
+  ClientProgressMonitor asCoreMonitor();
 
   void doInSubProgress(String title, float fraction, Consumer<ProgressFacade> subRunnable);
 

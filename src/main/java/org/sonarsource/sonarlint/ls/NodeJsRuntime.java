@@ -1,6 +1,6 @@
 /*
  * SonarLint Language Server
- * Copyright (C) 2009-2021 SonarSource SA
+ * Copyright (C) 2009-2023 SonarSource SA
  * mailto:info AT sonarsource DOT com
  *
  * This program is free software; you can redistribute it and/or
@@ -26,9 +26,8 @@ import java.util.function.Supplier;
 import javax.annotation.Nullable;
 import org.apache.commons.lang3.StringUtils;
 import org.sonarsource.sonarlint.core.NodeJsHelper;
-import org.sonarsource.sonarlint.core.client.api.common.Version;
+import org.sonarsource.sonarlint.core.commons.Version;
 import org.sonarsource.sonarlint.ls.settings.SettingsManager;
-import org.sonarsource.sonarlint.ls.settings.WorkspaceSettings;
 
 public class NodeJsRuntime {
 
@@ -48,8 +47,8 @@ public class NodeJsRuntime {
   }
 
   private void init() {
-    WorkspaceSettings currentSettings = settingsManager.getCurrentSettings();
-    NodeJsHelper helper = nodeJsHelperFactory.get();
+    var currentSettings = settingsManager.getCurrentSettings();
+    var helper = nodeJsHelperFactory.get();
     helper.detect(Optional.ofNullable(currentSettings.pathToNodeExecutable())
       .filter(StringUtils::isNotEmpty)
       .map(Paths::get)
@@ -60,7 +59,7 @@ public class NodeJsRuntime {
   }
 
   @Nullable
-  String nodeVersion() {
+  public String nodeVersion() {
     return Optional.ofNullable(getNodeJsVersion())
       .map(Version::toString)
       .orElse(null);

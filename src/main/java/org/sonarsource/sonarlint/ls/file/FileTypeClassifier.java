@@ -1,6 +1,6 @@
 /*
  * SonarLint Language Server
- * Copyright (C) 2009-2021 SonarSource SA
+ * Copyright (C) 2009-2023 SonarSource SA
  * mailto:info AT sonarsource DOT com
  *
  * This program is free software; you can redistribute it and/or
@@ -22,22 +22,18 @@ package org.sonarsource.sonarlint.ls.file;
 import java.net.URI;
 import java.nio.file.Paths;
 import java.util.Optional;
+import java.util.function.Supplier;
 import javax.annotation.Nullable;
-import org.sonar.api.utils.log.Logger;
-import org.sonar.api.utils.log.Loggers;
+import org.sonarsource.sonarlint.core.commons.log.SonarLintLogger;
 import org.sonarsource.sonarlint.ls.SonarLintExtendedLanguageClient;
 import org.sonarsource.sonarlint.ls.settings.WorkspaceFolderSettings;
 
 public class FileTypeClassifier {
-  private static final Logger LOG = Loggers.get(FileTypeClassifier.class);
-  private final FileLanguageCache fileLanguageCache;
+  private static final SonarLintLogger LOG = SonarLintLogger.get();
 
-  public FileTypeClassifier(FileLanguageCache fileLanguageCache) {
-    this.fileLanguageCache = fileLanguageCache;
-  }
-
-  public boolean isTest(@Nullable WorkspaceFolderSettings settings, URI fileUri, Optional<SonarLintExtendedLanguageClient.GetJavaConfigResponse> javaConfig) {
-    if (fileLanguageCache.isJava(fileUri) && javaConfig.map(SonarLintExtendedLanguageClient.GetJavaConfigResponse::isTest).orElse(false)) {
+  public boolean isTest(@Nullable WorkspaceFolderSettings settings, URI fileUri,
+    boolean isJava, Supplier<Optional<SonarLintExtendedLanguageClient.GetJavaConfigResponse>> javaConfig) {
+    if (isJava && javaConfig.get().map(SonarLintExtendedLanguageClient.GetJavaConfigResponse::isTest).orElse(false)) {
       LOG.debug("Classified as test by vscode-java");
       return true;
     }

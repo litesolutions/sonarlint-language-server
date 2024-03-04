@@ -1,6 +1,6 @@
 /*
  * SonarLint Language Server
- * Copyright (C) 2009-2021 SonarSource SA
+ * Copyright (C) 2009-2023 SonarSource SA
  * mailto:info AT sonarsource DOT com
  *
  * This program is free software; you can redistribute it and/or
@@ -19,14 +19,14 @@
  */
 package org.sonarsource.sonarlint.ls.settings;
 
-import javax.annotation.CheckForNull;
+import javax.annotation.Nullable;
 import org.sonarsource.sonarlint.ls.folders.WorkspaceFolderWrapper;
 
 public interface WorkspaceFolderSettingsChangeListener {
   /**
-   * @param workspaceFolderPath if null, it means there is a change for default globalSettings (for files not in a workspace workspaceFolderPath)
+   * @param folder if null, it means there is a change for default globalSettings (for files not in a workspace workspaceFolderPath)
    * @param oldValue
    * @param newValue
    */
-  void onChange(@CheckForNull WorkspaceFolderWrapper folder, @CheckForNull WorkspaceFolderSettings oldValue, WorkspaceFolderSettings newValue);
+  void onChange(@Nullable WorkspaceFolderWrapper folder, @Nullable WorkspaceFolderSettings oldValue, WorkspaceFolderSettings newValue);
 }

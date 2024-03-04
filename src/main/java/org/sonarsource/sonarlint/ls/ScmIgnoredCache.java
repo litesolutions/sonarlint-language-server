@@ -1,6 +1,6 @@
 /*
  * SonarLint Language Server
- * Copyright (C) 2009-2021 SonarSource SA
+ * Copyright (C) 2009-2023 SonarSource SA
  * mailto:info AT sonarsource DOT com
  *
  * This program is free software; you can redistribute it and/or
@@ -25,13 +25,14 @@ import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
-import org.sonar.api.utils.log.Logger;
-import org.sonar.api.utils.log.Loggers;
+import org.sonarsource.sonarlint.core.commons.log.SonarLintLogger;
+import org.sonarsource.sonarlint.ls.util.Utils;
 
 import static java.util.Optional.ofNullable;
 
 public class ScmIgnoredCache {
-  private static final Logger LOG = Loggers.get(ScmIgnoredCache.class);
+  private static final SonarLintLogger LOG = SonarLintLogger.get();
+
   private final SonarLintExtendedLanguageClient client;
   public final Map<URI, Optional<Boolean>> filesIgnoredByUri = new ConcurrentHashMap<>();
 
@@ -39,7 +40,7 @@ public class ScmIgnoredCache {
     this.client = client;
   }
 
-  public void remove(URI fileUri) {
+  public void didClose(URI fileUri) {
     filesIgnoredByUri.remove(fileUri);
   }
 
@@ -58,9 +59,8 @@ public class ScmIgnoredCache {
   }
 
   private CompletableFuture<Optional<Boolean>> getOrFetchAsync(URI fileUri) {
-    Optional<Boolean> isIgnoredFromCache = filesIgnoredByUri.get(fileUri);
-    if (isIgnoredFromCache != null) {
-      return CompletableFuture.completedFuture(isIgnoredFromCache);
+    if (filesIgnoredByUri.containsKey(fileUri)) {
+      return CompletableFuture.completedFuture(filesIgnoredByUri.get(fileUri));
     }
     return client.isIgnoredByScm(fileUri.toString())
       .handle((r, t) -> {
@@ -70,9 +70,9 @@ public class ScmIgnoredCache {
         return r;
       })
       .thenApply(ignored -> {
-        Optional<Boolean> ignoredOpt = ofNullable(ignored);
+        var ignoredOpt = ofNullable(ignored);
         filesIgnoredByUri.put(fileUri, ignoredOpt);
-        LOG.debug("Cached SCM ignore status for file '{}'", fileUri);
+        LOG.debug("Cached SCM ignore status for file \"{}\": {}", fileUri, ignoredOpt.map(b -> Boolean.TRUE.equals(b) ? "Ignored" : "Not ignored").orElse("Unknown"));
         return ignoredOpt;
       });
   }

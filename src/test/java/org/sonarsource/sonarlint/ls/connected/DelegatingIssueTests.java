@@ -1,6 +1,6 @@
 /*
  * SonarLint Language Server
- * Copyright (C) 2009-2021 SonarSource SA
+ * Copyright (C) 2009-2023 SonarSource SA
  * mailto:info AT sonarsource DOT com
  *
  * This program is free software; you can redistribute it and/or
@@ -19,12 +19,16 @@
  */
 package org.sonarsource.sonarlint.ls.connected;
 
-import java.util.Collections;
+import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.sonarsource.sonarlint.core.client.api.common.TextRange;
-import org.sonarsource.sonarlint.core.client.api.common.analysis.ClientInputFile;
+import org.sonarsource.sonarlint.core.analysis.api.ClientInputFile;
+import org.sonarsource.sonarlint.core.analysis.api.Flow;
 import org.sonarsource.sonarlint.core.client.api.common.analysis.Issue;
+import org.sonarsource.sonarlint.core.commons.IssueSeverity;
+import org.sonarsource.sonarlint.core.commons.RuleType;
+import org.sonarsource.sonarlint.core.commons.TextRangeWithHash;
+import org.sonarsource.sonarlint.core.issuetracking.Trackable;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
@@ -32,33 +36,45 @@ import static org.mockito.Mockito.when;
 
 class DelegatingIssueTests {
 
+  private final Trackable<Issue> trackable = mock(Trackable.class);
+  private final TextRangeWithHash textRange = mock(TextRangeWithHash.class);
   private final Issue issue = mock(Issue.class);
-  private final DelegatingIssue delegatingIssue = new DelegatingIssue(issue);
+  private DelegatingIssue delegatingIssue;
 
   @BeforeEach
   public void prepare() {
-    when(issue.getSeverity()).thenReturn("BLOCKER");
-    when(issue.getType()).thenReturn("BUG");
+    when(issue.getSeverity()).thenReturn(IssueSeverity.BLOCKER);
+    when(trackable.getType()).thenReturn(RuleType.BUG);
     when(issue.getMessage()).thenReturn("don't do this");
     when(issue.getRuleKey()).thenReturn("squid:123");
-    when(issue.getRuleName()).thenReturn("don't do that");
+    when(issue.getTextRange()).thenReturn(textRange);
     when(issue.getStartLine()).thenReturn(2);
     when(issue.getStartLineOffset()).thenReturn(3);
     when(issue.getEndLine()).thenReturn(4);
     when(issue.getEndLineOffset()).thenReturn(5);
-    when(issue.flows()).thenReturn(Collections.singletonList(mock(Issue.Flow.class)));
+    when(trackable.getClientObject()).thenReturn(issue);
+    when(issue.flows()).thenReturn(List.of(mock(Flow.class)));
     when(issue.getInputFile()).thenReturn(mock(ClientInputFile.class));
-    when(issue.getTextRange()).thenReturn(mock(TextRange.class));
+    when(trackable.getTextRange()).thenReturn(mock(TextRangeWithHash.class));
+    delegatingIssue = new DelegatingIssue(trackable);
   }
 
   @Test
   void testGetSeverity() {
-    assertThat(delegatingIssue.getSeverity()).isNotEmpty().isEqualTo(issue.getSeverity());
+    assertThat(delegatingIssue.getSeverity()).isEqualTo(issue.getSeverity());
+  }
+
+  @Test
+  void testGetUserSeverity() {
+    when(trackable.getSeverity()).thenReturn(IssueSeverity.INFO);
+    var delegatingIssueWithUserSeverity = new DelegatingIssue(trackable);
+
+    assertThat(delegatingIssueWithUserSeverity.getSeverity()).isEqualTo(IssueSeverity.INFO);
   }
 
   @Test
   void testGetType() {
-    assertThat(delegatingIssue.getType()).isNotEmpty().isEqualTo(issue.getType());
+    assertThat(delegatingIssue.getType()).isEqualTo(trackable.getType());
   }
 
   @Test
@@ -72,28 +88,23 @@ class DelegatingIssueTests {
   }
 
   @Test
-  void testGetRuleName() {
-    assertThat(delegatingIssue.getRuleName()).isNotEmpty().isEqualTo(issue.getRuleName());
-  }
-
-  @Test
   void testGetStartLine() {
-    assertThat(delegatingIssue.getStartLine()).isGreaterThan(0).isEqualTo(issue.getStartLine());
+    assertThat(delegatingIssue.getStartLine()).isPositive().isEqualTo(issue.getStartLine());
   }
 
   @Test
   void testGetStartLineOffset() {
-    assertThat(delegatingIssue.getStartLineOffset()).isGreaterThan(0).isEqualTo(issue.getStartLineOffset());
+    assertThat(delegatingIssue.getStartLineOffset()).isPositive().isEqualTo(issue.getStartLineOffset());
   }
 
   @Test
   void testGetEndLine() {
-    assertThat(delegatingIssue.getEndLine()).isGreaterThan(0).isEqualTo(issue.getEndLine());
+    assertThat(delegatingIssue.getEndLine()).isPositive().isEqualTo(issue.getEndLine());
   }
 
   @Test
   void testGetEndLineOffset() {
-    assertThat(delegatingIssue.getEndLineOffset()).isGreaterThan(0).isEqualTo(issue.getEndLineOffset());
+    assertThat(delegatingIssue.getEndLineOffset()).isPositive().isEqualTo(issue.getEndLineOffset());
   }
 
   @Test

@@ -1,6 +1,6 @@
 /*
  * SonarLint Language Server
- * Copyright (C) 2009-2021 SonarSource SA
+ * Copyright (C) 2009-2023 SonarSource SA
  * mailto:info AT sonarsource DOT com
  *
  * This program is free software; you can redistribute it and/or
@@ -30,15 +30,14 @@ import org.eclipse.lsp4j.WorkDoneProgressCreateParams;
 import org.eclipse.lsp4j.jsonrpc.CancelChecker;
 import org.eclipse.lsp4j.jsonrpc.messages.Either;
 import org.eclipse.lsp4j.services.LanguageClient;
-import org.sonar.api.utils.log.Logger;
-import org.sonar.api.utils.log.Loggers;
-import org.sonarsource.sonarlint.core.client.api.exceptions.CanceledException;
+import org.sonarsource.sonarlint.core.commons.log.SonarLintLogger;
+import org.sonarsource.sonarlint.core.commons.progress.CanceledException;
 
-import static org.sonarsource.sonarlint.ls.Utils.interrupted;
+import static org.sonarsource.sonarlint.ls.util.Utils.interrupted;
 
 public class ProgressManager {
 
-  private static final Logger LOG = Loggers.get(ProgressManager.class);
+  private static final SonarLintLogger LOG = SonarLintLogger.get();
 
   private final LanguageClient client;
   private final Map<Either<String, Integer>, LSProgressMonitor> liveProgress = new ConcurrentHashMap<>();
@@ -67,7 +66,7 @@ public class ProgressManager {
           throw new IllegalStateException(e.getCause());
         }
       }
-      LSProgressMonitor progress = new LSProgressMonitor(client, progressToken, cancelToken);
+      var progress = new LSProgressMonitor(client, progressToken, cancelToken);
       liveProgress.put(progressToken, progress);
       progress.start(progressTitle);
       try {
@@ -91,7 +90,7 @@ public class ProgressManager {
   }
 
   public void cancelProgress(WorkDoneProgressCancelParams params) {
-    LSProgressMonitor progressFacade = liveProgress.get(params.getToken());
+    var progressFacade = liveProgress.get(params.getToken());
     if (progressFacade == null) {
       LOG.debug("Unable to cancel progress: " + params.getToken());
     } else {

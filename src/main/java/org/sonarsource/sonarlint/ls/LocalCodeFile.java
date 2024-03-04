@@ -1,6 +1,6 @@
 /*
  * SonarLint Language Server
- * Copyright (C) 2009-2021 SonarSource SA
+ * Copyright (C) 2009-2023 SonarSource SA
  * mailto:info AT sonarsource DOT com
  *
  * This program is free software; you can redistribute it and/or
@@ -19,35 +19,37 @@
  */
 package org.sonarsource.sonarlint.ls;
 
-import com.google.common.io.Files;
 import java.io.File;
 import java.io.IOException;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.util.Collections;
 import java.util.List;
 import javax.annotation.CheckForNull;
 import javax.annotation.Nullable;
-import org.sonarsource.sonarlint.core.client.api.common.TextRange;
+import org.sonarsource.sonarlint.core.commons.TextRange;
 
 public class LocalCodeFile {
 
   private List<String> lines;
 
   private LocalCodeFile(URI uri) {
-    File localFile = new File(uri);
+    var localFile = new File(uri);
     if (localFile.exists()) {
       try {
         // TODO Find the right character set to use?
-        this.lines = Files.readLines(localFile, StandardCharsets.UTF_8);
-      } catch(IOException ioe) {
+        this.lines = Files.readAllLines(localFile.toPath(), StandardCharsets.UTF_8);
+      } catch (IOException ioe) {
         this.lines = Collections.emptyList();
       }
     }
   }
 
   public String content() {
-    return String.join("\n", lines);
+    return String.join("\n", lines)
+      // strip ZWNBSP
+      .replace("\ufeff", "");
   }
 
   @CheckForNull
@@ -55,27 +57,27 @@ public class LocalCodeFile {
     if (range == null) {
       return null;
     }
-    int lineIndex = range.getStartLine() - 1;
+    var lineIndex = range.getStartLine() - 1;
     if (lines.size() < lineIndex) {
       return null;
     } else {
       if (lines.get(lineIndex).length() < range.getStartLineOffset()) {
         return null;
       } else {
-        StringBuilder snippet = new StringBuilder();
-        int maxLine = Math.min(lines.size() - 1, range.getEndLine() - 1);
-        int startOffset = range.getStartLineOffset();
+        var snippet = new StringBuilder();
+        var maxLine = Math.min(lines.size() - 1, range.getEndLine() - 1);
+        var startOffset = range.getStartLineOffset();
         do {
-          String currentLine = lines.get(lineIndex);
-          if(lineIndex == maxLine) {
-            int endOffset = Math.min(currentLine.length(), range.getEndLineOffset());
+          var currentLine = lines.get(lineIndex);
+          if (lineIndex == maxLine) {
+            var endOffset = Math.min(currentLine.length(), range.getEndLineOffset());
             snippet.append(currentLine.substring(startOffset, endOffset));
           } else {
             snippet.append(currentLine.substring(startOffset)).append('\n');
             startOffset = 0;
           }
           lineIndex += 1;
-        } while(lineIndex <= maxLine);
+        } while (lineIndex <= maxLine);
         return snippet.toString();
       }
     }

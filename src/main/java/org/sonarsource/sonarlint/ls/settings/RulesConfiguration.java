@@ -1,6 +1,6 @@
 /*
  * SonarLint Language Server
- * Copyright (C) 2009-2021 SonarSource SA
+ * Copyright (C) 2009-2023 SonarSource SA
  * mailto:info AT sonarsource DOT com
  *
  * This program is free software; you can redistribute it and/or
@@ -27,7 +27,7 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
 import javax.annotation.CheckForNull;
-import org.sonarsource.sonarlint.core.client.api.common.RuleKey;
+import org.sonarsource.sonarlint.core.commons.RuleKey;
 
 class RulesConfiguration {
 
@@ -68,7 +68,7 @@ class RulesConfiguration {
     ConfiguredRule(Map.Entry<String, Object> ruleJson) {
       this.key = safeParseRuleKey(ruleJson.getKey());
       if (ruleJson.getValue() instanceof Map) {
-        Map<String, Object> config = (Map<String, Object>) ruleJson.getValue();
+        var config = (Map<String, Object>) ruleJson.getValue();
         this.level = safeParseLevel(config);
         this.parameters = safeParseParameters(config);
       } else {
@@ -89,7 +89,7 @@ class RulesConfiguration {
     @CheckForNull
     private static String safeParseLevel(Map<String, Object> config) {
       Object levelValue = config.get("level");
-      return levelValue instanceof String ? (String) levelValue : null;
+      return levelValue instanceof String actualValue ? actualValue : null;
     }
 
     @SuppressWarnings("unchecked")

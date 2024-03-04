@@ -1,6 +1,6 @@
 /*
  * SonarLint Language Server
- * Copyright (C) 2009-2021 SonarSource SA
+ * Copyright (C) 2009-2023 SonarSource SA
  * mailto:info AT sonarsource DOT com
  *
  * This program is free software; you can redistribute it and/or
@@ -19,80 +19,103 @@
  */
 package org.sonarsource.sonarlint.ls;
 
-import java.net.URL;
 import java.nio.file.Path;
-import java.util.Arrays;
 import java.util.Collection;
 import java.util.EnumSet;
-import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import javax.annotation.CheckForNull;
-import javax.annotation.Nullable;
-import org.sonar.api.utils.log.Logger;
-import org.sonar.api.utils.log.Loggers;
+import java.util.concurrent.atomic.AtomicReference;
+import org.jetbrains.annotations.NotNull;
 import org.sonarsource.sonarlint.core.ConnectedSonarLintEngineImpl;
 import org.sonarsource.sonarlint.core.StandaloneSonarLintEngineImpl;
-import org.sonarsource.sonarlint.core.client.api.common.Language;
-import org.sonarsource.sonarlint.core.client.api.common.ModulesProvider;
+import org.sonarsource.sonarlint.core.analysis.api.ClientModulesProvider;
 import org.sonarsource.sonarlint.core.client.api.connected.ConnectedGlobalConfiguration;
 import org.sonarsource.sonarlint.core.client.api.connected.ConnectedSonarLintEngine;
 import org.sonarsource.sonarlint.core.client.api.standalone.StandaloneGlobalConfiguration;
 import org.sonarsource.sonarlint.core.client.api.standalone.StandaloneSonarLintEngine;
+import org.sonarsource.sonarlint.core.commons.Language;
+import org.sonarsource.sonarlint.core.commons.log.SonarLintLogger;
 import org.sonarsource.sonarlint.ls.log.LanguageClientLogOutput;
+import org.sonarsource.sonarlint.ls.settings.ServerConnectionSettings;
 
 public class EnginesFactory {
 
-  private static final Logger LOG = Loggers.get(EnginesFactory.class);
+  public static Path sonarLintUserHomeOverride = null;
 
-  private final LanguageClientLogOutput lsLogOutput;
-  private final Collection<URL> standaloneAnalyzers;
-  @CheckForNull
-  private Path typeScriptPath;
+  private static final SonarLintLogger LOG = SonarLintLogger.get();
+
+  private final LanguageClientLogOutput logOutput;
+  private final Collection<Path> standaloneAnalyzers;
+  private final Map<String, Path> embeddedPluginsToPath;
+  private String omnisharpDirectory;
+
+
   private static final Language[] STANDALONE_LANGUAGES = {
+    Language.CPP,
+    Language.C,
+    Language.CLOUDFORMATION,
+    Language.CS,
+    Language.CSS,
+    Language.DOCKER,
+    Language.GO,
     Language.HTML,
+    Language.IPYTHON,
     Language.JAVA,
     Language.JS,
+    Language.KUBERNETES,
     Language.PHP,
     Language.PYTHON,
     Language.SECRETS,
+    Language.TERRAFORM,
     Language.TS,
-    Language.OBJECTSCRIPT
+    Language.XML,
+    Language.YAML,
+    Language.OBJECTSCRIPT,
   };
 
   private static final Language[] CONNECTED_ADDITIONAL_LANGUAGES = {
     Language.APEX,
+    Language.COBOL,
     Language.PLSQL
   };
 
   private final NodeJsRuntime nodeJsRuntime;
-  private final ModulesProvider modulesProvider;
-  private final Collection<URL> extraAnalyzers;
+  private final ClientModulesProvider modulesProvider;
+  private final AtomicReference<Boolean> shutdown = new AtomicReference<>(false);
 
-  public EnginesFactory(Collection<URL> standaloneAnalyzers, LanguageClientLogOutput lsLogOutput, NodeJsRuntime nodeJsRuntime, ModulesProvider modulesProvider, Collection<URL> extraAnalyzers) {
+  public EnginesFactory(Collection<Path> standaloneAnalyzers, Map<String, Path> embeddedPluginsToPath,
+    LanguageClientLogOutput globalLogOutput, NodeJsRuntime nodeJsRuntime, ClientModulesProvider modulesProvider) {
     this.standaloneAnalyzers = standaloneAnalyzers;
-    this.lsLogOutput = lsLogOutput;
+    this.embeddedPluginsToPath = embeddedPluginsToPath;
+    this.logOutput = globalLogOutput;
     this.nodeJsRuntime = nodeJsRuntime;
     this.modulesProvider = modulesProvider;
-    this.extraAnalyzers = extraAnalyzers;
+  }
+
+  public void setOmnisharpDirectory(String omnisharpDirectory) {
+    this.omnisharpDirectory = omnisharpDirectory;
   }
 
   public StandaloneSonarLintEngine createStandaloneEngine() {
+    if (shutdown.get().equals(true)) {
+      throw new IllegalStateException("Language server is shutting down, won't create engine");
+    }
     LOG.debug("Starting standalone SonarLint engine...");
     LOG.debug("Using {} analyzers", standaloneAnalyzers.size());
 
     try {
-      StandaloneGlobalConfiguration configuration = StandaloneGlobalConfiguration.builder()
-        .setExtraProperties(prepareExtraProps())
+      var configuration = StandaloneGlobalConfiguration.builder()
+        .setSonarLintUserHome(sonarLintUserHomeOverride)
         .addEnabledLanguages(STANDALONE_LANGUAGES)
         .setNodeJs(nodeJsRuntime.getNodeJsPath(), nodeJsRuntime.getNodeJsVersion())
-        .addPlugins(standaloneAnalyzers.toArray(new URL[0]))
-        .addPlugins(extraAnalyzers.toArray(new URL[0]))
+        .addPlugins(standaloneAnalyzers.toArray(Path[]::new))
         .setModulesProvider(modulesProvider)
-        .setLogOutput(lsLogOutput)
+        .setExtraProperties(getExtraProperties())
+        .setLogOutput(logOutput)
         .build();
 
-      StandaloneSonarLintEngine engine = newStandaloneEngine(configuration);
+      var engine = newStandaloneEngine(configuration);
       LOG.debug("Standalone SonarLint engine started");
       return engine;
     } catch (Exception e) {
@@ -105,48 +128,62 @@ public class EnginesFactory {
     return new StandaloneSonarLintEngineImpl(configuration);
   }
 
-  public ConnectedSonarLintEngine createConnectedEngine(String connectionId) {
-    ConnectedGlobalConfiguration.Builder builder = ConnectedGlobalConfiguration.builder()
+  public ConnectedSonarLintEngine createConnectedEngine(String connectionId,
+    ServerConnectionSettings serverConnectionSettings) {
+    if (shutdown.get().equals(true)) {
+      throw new IllegalStateException("Language server is shutting down, won't create engine");
+    }
+    ConnectedGlobalConfiguration.Builder builder;
+    if (serverConnectionSettings.isSonarCloudAlias()) {
+      builder = ConnectedGlobalConfiguration.sonarCloudBuilder();
+    } else {
+      builder = ConnectedGlobalConfiguration.sonarQubeBuilder();
+    }
+    builder
+      .setSonarLintUserHome(sonarLintUserHomeOverride)
       .setConnectionId(connectionId)
-      .setExtraProperties(prepareExtraProps())
       .addEnabledLanguages(STANDALONE_LANGUAGES)
       .addEnabledLanguages(CONNECTED_ADDITIONAL_LANGUAGES)
+      .enableHotspots()
       .setNodeJs(nodeJsRuntime.getNodeJsPath(), nodeJsRuntime.getNodeJsVersion())
       .setModulesProvider(modulesProvider)
-      .setLogOutput(lsLogOutput);
+      .setExtraProperties(getExtraProperties())
+      .setLogOutput(logOutput);
 
-    extraAnalyzers.forEach(analyzer-> builder.addExtraPlugin(guessPluginKey(analyzer.getPath()), analyzer));
-    ConnectedSonarLintEngine engine = newConnectedEngine(builder.build());
+    embeddedPluginsToPath.forEach(builder::useEmbeddedPlugin);
+
+    var engine = newConnectedEngine(builder.build());
 
     LOG.debug("SonarLint engine started for connection '{}'", connectionId);
     return engine;
   }
 
-  static String guessPluginKey(String pluginUrl) {
-    if (pluginUrl.contains("sonarsecrets")) {
-      return Language.SECRETS.getPluginKey();
+  @NotNull
+  private Map<String, String> getExtraProperties() {
+    if (omnisharpDirectory == null) {
+      return Map.of();
+    } else {
+      return Map.of(
+        "sonar.cs.internal.omnisharpNet6Location", Path.of(omnisharpDirectory, "net6").toString(),
+        "sonar.cs.internal.omnisharpWinLocation", Path.of(omnisharpDirectory, "net472").toString(),
+        "sonar.cs.internal.omnisharpMonoLocation", Path.of(omnisharpDirectory, "mono").toString()
+      );
     }
-    throw new IllegalStateException("Unknown analyzer.");
-  }
-
-  private Map<String, String> prepareExtraProps() {
-    Map<String, String> extraProperties = new HashMap<>();
-    if (typeScriptPath != null) {
-      extraProperties.put(AnalysisManager.TYPESCRIPT_PATH_PROP, typeScriptPath.toString());
-    }
-    return extraProperties;
   }
 
   ConnectedSonarLintEngine newConnectedEngine(ConnectedGlobalConfiguration configuration) {
     return new ConnectedSonarLintEngineImpl(configuration);
   }
 
-  public void initialize(@Nullable Path typeScriptPath) {
-    this.typeScriptPath = typeScriptPath;
-  }
-
   public static Set<Language> getStandaloneLanguages() {
-    return EnumSet.copyOf(Arrays.asList(STANDALONE_LANGUAGES));
+    return EnumSet.copyOf(List.of(STANDALONE_LANGUAGES));
   }
 
+  public static Set<Language> getConnectedLanguages() {
+    return Set.of(CONNECTED_ADDITIONAL_LANGUAGES);
+  }
+
+  public void shutdown() {
+    shutdown.set(true);
+  }
 }

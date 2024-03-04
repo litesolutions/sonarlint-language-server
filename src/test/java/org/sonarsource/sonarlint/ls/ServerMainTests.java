@@ -1,6 +1,6 @@
 /*
  * SonarLint Language Server
- * Copyright (C) 2009-2021 SonarSource SA
+ * Copyright (C) 2009-2023 SonarSource SA
  * mailto:info AT sonarsource DOT com
  *
  * This program is free software; you can redistribute it and/or
@@ -19,126 +19,74 @@
  */
 package org.sonarsource.sonarlint.ls;
 
-import java.io.PrintStream;
-import java.net.URL;
-import java.nio.charset.StandardCharsets;
-import java.util.Collection;
-
+import java.io.PrintWriter;
+import java.io.StringWriter;
+import java.nio.file.Paths;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.sonarsource.sonarlint.shaded.org.apache.commons.io.output.ByteArrayOutputStream;
+import picocli.CommandLine;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.tuple;
-import static org.junit.jupiter.api.Assertions.assertThrows;
-import static org.mockito.Mockito.doThrow;
-import static org.mockito.Mockito.spy;
 
 class ServerMainTests {
 
-  private ByteArrayOutputStream out = new ByteArrayOutputStream();
-  private ByteArrayOutputStream err = new ByteArrayOutputStream();
-  private ServerMain underTest = new ServerMain(new PrintStream(out), new PrintStream(err));
+  private static final String INVALID_PATH = "\0invalid?;path\n";
+  private ServerMain underTest;
+
+  private CommandLine cmd;
+  private StringWriter cmdOutput;
 
   @BeforeEach
   public void prepare() {
-    underTest = spy(underTest);
-    doThrow(new RuntimeException("exit called")).when(underTest).exitWithError();
+    underTest = new ServerMain();
+    cmd = new CommandLine(underTest);
+    cmd.setColorScheme(CommandLine.Help.defaultColorScheme(CommandLine.Help.Ansi.OFF));
+
+    cmdOutput = new StringWriter();
+    cmd.setOut(new PrintWriter(cmdOutput));
+    cmd.setErr(new PrintWriter(cmdOutput));
   }
 
   @Test
-  public void testRequiredArguments() {
+  void testRequiredArguments() {
+    cmd.execute();
 
-    RuntimeException thrown = assertThrows(RuntimeException.class, () -> {
-      underTest.startLanguageServer();
-    });
-
-    assertThat(thrown).hasMessage("exit called");
-    assertThat(err.toString(StandardCharsets.UTF_8))
-      .isEqualTo("Usage: java -jar sonarlint-server.jar <jsonRpcPort> " +
-              "[-analyzers file:///path/to/analyzer1.jar [file:///path/to/analyzer2.jar] ...] " +
-              "[-extraAnalyzers file:///path/to/analyzer3.jar [file:///path/to/analyzer4.jar] ...]" + System.lineSeparator());
+    assertThat(cmdOutput.toString()).startsWith("Use -stdio or -jsonRpcPort");
   }
 
   @Test
-  public void testInvalidPortArgument() {
+  void testInvalidPortArgument() {
+    cmd.execute("not_a_number");
 
-    RuntimeException thrown = assertThrows(RuntimeException.class, () -> {
-      underTest.startLanguageServer("not_a_number");
-    });
-
-    assertThat(thrown).hasMessage("exit called");
-    assertThat(err.toString(StandardCharsets.UTF_8))
-      .contains("Invalid port provided as first parameter");
+    assertThat(cmdOutput.toString()).contains("'not_a_number' is not an int");
   }
 
   @Test
-  public void testInvalidPluginURL() {
+  void testConflictingPortArgument() {
+    cmd.execute("42042", "-port", "42042");
 
-    RuntimeException thrown = assertThrows(RuntimeException.class, () -> {
-      underTest.startLanguageServer("1", "-analyzers", "http/invalid");
-    });
-
-    assertThat(thrown).hasMessage("exit called");
-    assertThat(err.toString(StandardCharsets.UTF_8))
-      .contains("Invalid argument at position 3. Expected an URL.");
+    assertThat(cmdOutput.toString()).contains("Cannot use positional port argument and option at the same time.");
   }
 
   @Test
-  public void testInvalidExtraPluginURL() {
+  void testConflictingIoArguments() {
+    cmd.execute("-port", "42042", "-stdio");
 
-    RuntimeException thrown = assertThrows(RuntimeException.class, () -> {
-      underTest.startLanguageServer("1", "-analyzers", "http://analyzer.jar", "-extraAnalyzers", "http/invalid");
-    });
-
-    assertThat(thrown).hasMessage("exit called");
-    assertThat(err.toString(StandardCharsets.UTF_8))
-      .contains("Invalid argument at position 5. Expected an URL.");
+    assertThat(cmdOutput.toString()).contains("Cannot use stdio and socket port at the same time.");
   }
 
   @Test
-  public void testExtractingAnalyzersPositive() {
-    String[] args = {"-analyzers", "http://url1.jar", "http://url2.jar"};
-    Collection<URL> urls = underTest.extractAnalyzers(args);
-    assertThat(urls).extracting(URL::getProtocol, URL::getHost)
-            .containsExactly(tuple("http", "url1.jar"), tuple("http", "url2.jar"));
+  void testInvalidPluginPath() {
+    cmd.execute("-analyzers", INVALID_PATH);
+
+    assertThat(cmdOutput.toString()).contains("java.nio.file.InvalidPathException");
   }
 
   @Test
-  public void testExtractingAnalyzersExitsIfNoKey() {
-    String[] args = {"http://url1.jar", "http://url2.jar"};
-
-    assertThrows(RuntimeException.class, ()-> underTest.extractAnalyzers(args));
+  void testExtractingAnalyzersPositive() {
+    cmd.execute("-analyzers", "folder/analyzer1.jar", "folder/analyzer2.jar");
+    var paths = underTest.getAnalyzers();
+    assertThat(paths).containsExactly(Paths.get("folder/analyzer1.jar"), Paths.get("folder/analyzer2.jar"));
   }
-
-  @Test
-  public void testExtractingAnalyzersExitsOnMalformedUrl() {
-    String[] args = {"-analyzers", "url1"};
-
-    assertThrows(RuntimeException.class, ()-> underTest.extractAnalyzers(args));
-  }
-
-  @Test
-  public void testExtractingExtraAnalyzersPositive() {
-    String[] args = {"-extraAnalyzers", "http://url1.jar", "http://url2.jar"};
-    Collection<URL> urls = underTest.extractExtraAnalyzers(args);
-    assertThat(urls).extracting(URL::getProtocol, URL::getHost)
-            .containsExactly(tuple("http", "url1.jar"), tuple("http", "url2.jar"));
-  }
-
-  @Test
-  public void testExtractingExtraAnalyzersReturnsEmptyListIfNoKey() {
-    String[] args = {"http://url1.jar", "http://url2.jar"};
-
-    Collection<URL> urls = underTest.extractExtraAnalyzers(args);
-    assertThat(urls).isEmpty();
-  }
-
-  @Test
-  public void testExtractingExtraAnalyzersExitsOnMalformedUrl() {
-    String[] args = {"-extraAnalyzers", "url1"};
-
-    assertThrows(RuntimeException.class, ()-> underTest.extractExtraAnalyzers(args));
-  }
-
 }
+

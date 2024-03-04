@@ -1,6 +1,6 @@
 /*
  * SonarLint Language Server
- * Copyright (C) 2009-2021 SonarSource SA
+ * Copyright (C) 2009-2023 SonarSource SA
  * mailto:info AT sonarsource DOT com
  *
  * This program is free software; you can redistribute it and/or
@@ -56,7 +56,7 @@ class ScmIgnoredCacheTests {
 
   @Test
   void ignored_status_should_be_cached_if_error() {
-    CompletableFuture<Boolean> completableFuture = new CompletableFuture<>();
+    var completableFuture = new CompletableFuture<Boolean>();
     completableFuture.completeExceptionally(new IllegalStateException("Future failed"));
     when(mockClient.isIgnoredByScm(FAKE_URI.toString())).thenReturn(completableFuture);
     assertThat(underTest.isIgnored(FAKE_URI)).isEmpty();

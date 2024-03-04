@@ -1,6 +1,6 @@
 /*
  * SonarLint Language Server
- * Copyright (C) 2009-2021 SonarSource SA
+ * Copyright (C) 2009-2023 SonarSource SA
  * mailto:info AT sonarsource DOT com
  *
  * This program is free software; you can redistribute it and/or
@@ -28,10 +28,10 @@ import org.eclipse.lsp4j.WorkDoneProgressReport;
 import org.eclipse.lsp4j.jsonrpc.CancelChecker;
 import org.eclipse.lsp4j.jsonrpc.messages.Either;
 import org.eclipse.lsp4j.services.LanguageClient;
-import org.sonarsource.sonarlint.core.client.api.common.ProgressMonitor;
-import org.sonarsource.sonarlint.core.client.api.exceptions.CanceledException;
+import org.sonarsource.sonarlint.core.commons.progress.CanceledException;
+import org.sonarsource.sonarlint.core.commons.progress.ClientProgressMonitor;
 
-public class LSProgressMonitor extends ProgressMonitor implements ProgressFacade {
+public class LSProgressMonitor implements ClientProgressMonitor, ProgressFacade {
 
   private final Either<String, Integer> progressToken;
   private final CancelChecker cancelToken;
@@ -47,8 +47,8 @@ public class LSProgressMonitor extends ProgressMonitor implements ProgressFacade
     this.progressToken = progressToken;
   }
 
-  void start(String title) {
-    WorkDoneProgressBegin progressBegin = new WorkDoneProgressBegin();
+  public void start(String title) {
+    var progressBegin = new WorkDoneProgressBegin();
     progressBegin.setTitle(title);
     progressBegin.setCancellable(true);
     progressBegin.setPercentage(0);
@@ -61,41 +61,41 @@ public class LSProgressMonitor extends ProgressMonitor implements ProgressFacade
 
   @Override
   public void end(@Nullable String message) {
-    WorkDoneProgressEnd progressEnd = new WorkDoneProgressEnd();
+    var progressEnd = new WorkDoneProgressEnd();
     progressEnd.setMessage(message);
     client.notifyProgress(new ProgressParams(progressToken, Either.forLeft(progressEnd)));
     this.ended = true;
   }
 
   @Override
-  public ProgressMonitor asCoreMonitor() {
+  public ClientProgressMonitor asCoreMonitor() {
     return this;
   }
 
   @Override
   public void executeNonCancelableSection(Runnable nonCancelable) {
-    disableCancelation();
+    disableCancellation();
     try {
       nonCancelable.run();
     } finally {
-      enableCancelation();
+      enableCancellation();
     }
   }
 
-  void enableCancelation() {
-    WorkDoneProgressReport progressReport = prepareProgressReport();
+  void enableCancellation() {
+    var progressReport = prepareProgressReport();
     progressReport.setCancellable(true);
     client.notifyProgress(new ProgressParams(progressToken, Either.forLeft(progressReport)));
   }
 
-  void disableCancelation() {
-    WorkDoneProgressReport progressReport = prepareProgressReport();
+  void disableCancellation() {
+    var progressReport = prepareProgressReport();
     progressReport.setCancellable(false);
     client.notifyProgress(new ProgressParams(progressToken, Either.forLeft(progressReport)));
   }
 
   private WorkDoneProgressReport prepareProgressReport() {
-    WorkDoneProgressReport progressReport = new WorkDoneProgressReport();
+    var progressReport = new WorkDoneProgressReport();
     // Repeat the last message and percentage in every notification, because contrary to what is documented, VSCode doesn't preserve
     // the previous one
     // if you send a progress without message/percentage
@@ -132,7 +132,7 @@ public class LSProgressMonitor extends ProgressMonitor implements ProgressFacade
     if (message != null) {
       this.lastMessage = message;
     }
-    WorkDoneProgressReport progressReport = prepareProgressReport();
+    var progressReport = prepareProgressReport();
     client.notifyProgress(new ProgressParams(progressToken, Either.forLeft(progressReport)));
   }
 
@@ -147,7 +147,7 @@ public class LSProgressMonitor extends ProgressMonitor implements ProgressFacade
   public void doInSubProgress(String title, float fraction, Consumer<ProgressFacade> subRunnable) {
     this.checkCanceled();
 
-    SubProgressMonitor subProgressMonitor = new SubProgressMonitor(this, title, fraction);
+    var subProgressMonitor = new SubProgressMonitor(this, title, fraction);
     subRunnable.accept(subProgressMonitor);
 
     if (!subProgressMonitor.ended) {
@@ -160,4 +160,8 @@ public class LSProgressMonitor extends ProgressMonitor implements ProgressFacade
     return lastPercentage;
   }
 
+  @Override
+  public void setIndeterminate(boolean b) {
+    // Not supported
+  }
 }

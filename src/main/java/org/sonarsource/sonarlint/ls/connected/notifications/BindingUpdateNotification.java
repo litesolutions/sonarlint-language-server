@@ -1,6 +1,6 @@
 /*
  * SonarLint Language Server
- * Copyright (C) 2009-2021 SonarSource SA
+ * Copyright (C) 2009-2023 SonarSource SA
  * mailto:info AT sonarsource DOT com
  *
  * This program is free software; you can redistribute it and/or
@@ -21,14 +21,13 @@ package org.sonarsource.sonarlint.ls.connected.notifications;
 
 import java.util.Collections;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import org.eclipse.lsp4j.MessageActionItem;
 import org.eclipse.lsp4j.ShowMessageRequestParams;
 import org.eclipse.lsp4j.services.LanguageClient;
-
-import static java.util.Collections.singletonList;
 
 public class BindingUpdateNotification {
 
@@ -51,7 +50,7 @@ public class BindingUpdateNotification {
   }
 
   private static ShowMessageRequestParams shouldUpdateBindingRequest(String projectKey) {
-    ShowMessageRequestParams requestParams = new ShowMessageRequestParams(singletonList(new MessageActionItem("Update")));
+    var requestParams = new ShowMessageRequestParams(List.of(new MessageActionItem("Update")));
     requestParams.setMessage("SonarLint - A binding update is available for project " + projectKey);
     return requestParams;
   }

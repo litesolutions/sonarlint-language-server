@@ -22,9 +22,9 @@ package org.sonarsource.sonarlint.ls;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.Collections;
+import java.util.HashMap;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
-import java.util.function.BooleanSupplier;
-import java.util.function.Supplier;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -34,8 +34,11 @@ import org.sonarsource.sonarlint.core.client.api.common.Language;
 import org.sonarsource.sonarlint.core.telemetry.TelemetryHttpClient;
 import org.sonarsource.sonarlint.core.telemetry.TelemetryManager;
 import org.sonarsource.sonarlint.core.telemetry.TelemetryPathManager;
+import org.sonarsource.sonarlint.ls.connected.ProjectBindingManager;
 import org.sonarsource.sonarlint.ls.http.ApacheHttpClient;
+import org.sonarsource.sonarlint.ls.settings.SettingsManager;
 import org.sonarsource.sonarlint.ls.settings.WorkspaceSettings;
+import org.sonarsource.sonarlint.ls.standalone.StandaloneEngineManager;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
@@ -63,18 +66,19 @@ class SonarLintTelemetryTests {
 
   private SonarLintTelemetry createTelemetry() {
     when(telemetryManager.isEnabled()).thenReturn(true);
-    SonarLintTelemetry telemetry = new SonarLintTelemetry(mock(ApacheHttpClient.class)) {
+    SonarLintTelemetry telemetry = new SonarLintTelemetry(mock(ApacheHttpClient.class), mock(SettingsManager.class),
+      mock(ProjectBindingManager.class), mock(NodeJsRuntime.class), mock(StandaloneEngineManager.class)) {
       @Override
-      TelemetryManager newTelemetryManager(Path path, TelemetryHttpClient client, BooleanSupplier usesConnectedMode, BooleanSupplier usesSonarCloud, BooleanSupplier devNotificationsDisabled, Supplier<String> nodeVersion) {
+      TelemetryManager newTelemetryManager(Path path, TelemetryHttpClient client) {
         return telemetryManager;
       }
     };
-    telemetry.init(Paths.get("dummy"), "product", "version", "ideVersion", () -> true, () -> true, () -> true, () -> "");
+    telemetry.init(Paths.get("dummy"), "product", "version", "ideVersion", new HashMap<>());
     return telemetry;
   }
 
   @Test
-  void disable_property_should_disable_telemetry() throws Exception {
+  void disable_property_should_disable_telemetry() {
     assertThat(createTelemetry().enabled()).isTrue();
 
     System.setProperty(SonarLintTelemetry.DISABLE_PROPERTY_KEY, "true");
@@ -99,7 +103,7 @@ class SonarLintTelemetryTests {
 
   @Test
   void create_telemetry_manager() {
-    assertThat(telemetry.newTelemetryManager(Paths.get(""), mock(TelemetryHttpClient.class), () -> true, () -> true, () -> true, () -> "")).isNotNull();
+    assertThat(telemetry.newTelemetryManager(Paths.get(""), mock(TelemetryHttpClient.class))).isNotNull();
   }
 
   @Test
@@ -194,7 +198,6 @@ class SonarLintTelemetryTests {
     verifyNoMoreInteractions(telemetryManager);
   }
 
-
   @Test
   void devNotificationsClicked_when_enabled() {
     when(telemetryManager.isEnabled()).thenReturn(true);
@@ -261,15 +264,32 @@ class SonarLintTelemetryTests {
   }
 
   @Test
+  void addQuickFixAppliedForRule_when_enabled() {
+    when(telemetryManager.isEnabled()).thenReturn(true);
+    telemetry.addQuickFixAppliedForRule("repo:key");
+    verify(telemetryManager).isEnabled();
+    verify(telemetryManager).addQuickFixAppliedForRule("repo:key");
+  }
+
+  @Test
+  void addQuickFixAppliedForRule_when_disabled() {
+    when(telemetryManager.isEnabled()).thenReturn(false);
+    telemetry.addQuickFixAppliedForRule("repo:key");
+    verify(telemetryManager).isEnabled();
+    verifyNoMoreInteractions(telemetryManager);
+  }
+
+  @Test
   void should_start_disabled_when_storagePath_null() {
     when(telemetryManager.isEnabled()).thenReturn(true);
-    SonarLintTelemetry telemetry = new SonarLintTelemetry(mock(ApacheHttpClient.class)) {
+    SonarLintTelemetry telemetry = new SonarLintTelemetry(mock(ApacheHttpClient.class), mock(SettingsManager.class),
+      mock(ProjectBindingManager.class), mock(NodeJsRuntime.class), mock(StandaloneEngineManager.class)) {
       @Override
-      TelemetryManager newTelemetryManager(Path path, TelemetryHttpClient client, BooleanSupplier usesConnectedMode, BooleanSupplier usesSonarCloud, BooleanSupplier devNotificationsDisabled, Supplier<String> nodeVersion) {
+      TelemetryManager newTelemetryManager(Path path, TelemetryHttpClient client) {
         return telemetryManager;
       }
     };
-    telemetry.init(null, "product", "version", "ideVersion", () -> true, () -> true, () -> true, () -> "");
+    telemetry.init(null, "product", "version", "ideVersion", new HashMap<>());
     assertThat(telemetry.enabled()).isFalse();
   }
 
@@ -289,4 +309,15 @@ class SonarLintTelemetryTests {
     String productKey = "vim";
     assertThat(getStoragePath(productKey, "dummy")).isEqualTo(TelemetryPathManager.getPath(productKey));
   }
+
+  @Test
+  void addReportedRules() {
+    when(telemetryManager.isEnabled()).thenReturn(true);
+    String rule = "ruleKey";
+    Set<String> strings = Collections.singleton(rule);
+    telemetry.addReportedRules(strings);
+    verify(telemetryManager).isEnabled();
+    verify(telemetryManager).addReportedRules(strings);
+  }
+
 }

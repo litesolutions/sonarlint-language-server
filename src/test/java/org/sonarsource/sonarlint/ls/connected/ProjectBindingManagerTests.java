@@ -28,6 +28,7 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.eclipse.lsp4j.MessageParams;
@@ -65,6 +66,7 @@ import static java.util.Collections.singletonList;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
@@ -415,7 +417,7 @@ class ProjectBindingManagerTests {
 
     assertThat(binding).isEmpty();
     verify(fakeEngine).stop(false);
-    assertThat(logTester.logs()).contains("Workspace 'WorkspaceFolder[uri=" + workspaceFolderPath.toUri().toString() + ",name=<null>]' unbound");
+    assertThat(logTester.logs()).contains("Workspace 'WorkspaceFolder[name=<null>,uri=" + workspaceFolderPath.toUri().toString() + "]' unbound");
   }
 
   @Test
@@ -461,7 +463,7 @@ class ProjectBindingManagerTests {
     verify(fakeEngine, never()).stop(anyBoolean());
     verify(fakeEngine).calculatePathPrefixes(eq(PROJECT_KEY2), any());
     assertThat(logTester.logs())
-      .contains("Resolved binding ProjectBinding[projectKey=myProject2,sqPathPrefix=sqPrefix2,idePathPrefix=idePrefix2] for folder " + workspaceFolderPath.toString());
+      .contains("Resolved binding ProjectBinding[idePathPrefix=idePrefix2,projectKey=myProject2,sqPathPrefix=sqPrefix2] for folder " + workspaceFolderPath.toString());
   }
 
   @Test
@@ -516,7 +518,7 @@ class ProjectBindingManagerTests {
     verify(fakeEngine, never()).stop(anyBoolean());
     verify(fakeEngine).calculatePathPrefixes(eq(PROJECT_KEY2), any());
     assertThat(logTester.logs())
-      .contains("Resolved binding ProjectBinding[projectKey=myProject2,sqPathPrefix=sqPrefix2,idePathPrefix=idePrefix2] for folder " + anotherFolderPath.toString());
+      .contains("Resolved binding ProjectBinding[idePathPrefix=idePrefix2,projectKey=myProject2,sqPathPrefix=sqPrefix2] for folder " + anotherFolderPath.toString());
   }
 
   @Test
@@ -543,7 +545,7 @@ class ProjectBindingManagerTests {
     verify(fakeEngine).stop(false);
     verify(fakeEngine2).calculatePathPrefixes(eq(PROJECT_KEY), any());
     assertThat(logTester.logs())
-      .contains("Resolved binding ProjectBinding[projectKey=myProject2,sqPathPrefix=sqPrefix2,idePathPrefix=idePrefix2] for folder " + workspaceFolderPath.toString());
+      .contains("Resolved binding ProjectBinding[idePathPrefix=idePrefix2,projectKey=myProject2,sqPathPrefix=sqPrefix2] for folder " + workspaceFolderPath.toString());
   }
 
   @Test
@@ -784,6 +786,7 @@ class ProjectBindingManagerTests {
       }
     })
       .when(fakeEngine).updateProject(any(), any(), eq(projectKey), anyBoolean(), eq(null));
+    when(fakeEngine.calculatePathPrefixes(eq(projectKey), anyCollection())).thenReturn(new ProjectBinding(projectKey, "", ""));
 
     underTest.getBinding(fileInAWorkspaceFolderPath.toUri());
     underTest.updateAllBindings(mock(CancelChecker.class), null);
@@ -835,6 +838,7 @@ class ProjectBindingManagerTests {
     StorageUpdateCheckResult checkResult = mock(StorageUpdateCheckResult.class);
     when(checkResult.needUpdate()).thenReturn(true);
     when(fakeEngine.checkIfGlobalStorageNeedUpdate(any(), any(), any())).thenReturn(checkResult);
+    when(bindingUpdateNotification.notifyBindingUpdateAvailable(anyString())).thenReturn(CompletableFuture.completedFuture(true));
 
     underTest.checkForBindingUpdates();
 
@@ -854,6 +858,7 @@ class ProjectBindingManagerTests {
     StorageUpdateCheckResult projectCheckResult = mock(StorageUpdateCheckResult.class);
     when(projectCheckResult.needUpdate()).thenReturn(true);
     when(fakeEngine.checkIfProjectStorageNeedUpdate(any(), any(), any(), any())).thenReturn(projectCheckResult);
+    when(bindingUpdateNotification.notifyBindingUpdateAvailable(anyString())).thenReturn(CompletableFuture.completedFuture(true));
 
     underTest.checkForBindingUpdates();
 

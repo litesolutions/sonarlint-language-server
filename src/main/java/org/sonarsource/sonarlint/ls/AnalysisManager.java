@@ -36,6 +36,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
@@ -89,6 +90,7 @@ import org.sonarsource.sonarlint.ls.settings.SettingsManager;
 import org.sonarsource.sonarlint.ls.settings.WorkspaceFolderSettings;
 import org.sonarsource.sonarlint.ls.settings.WorkspaceSettings;
 import org.sonarsource.sonarlint.ls.settings.WorkspaceSettingsChangeListener;
+import org.sonarsource.sonarlint.ls.standalone.StandaloneEngineManager;
 import org.sonarsource.sonarlint.plugin.api.module.file.ModuleFileEvent;
 
 import static java.util.Collections.emptyMap;
@@ -117,7 +119,10 @@ public class AnalysisManager implements WorkspaceSettingsChangeListener, Workspa
   private final FileTypeClassifier fileTypeClassifier;
   private final FileLanguageCache fileLanguageCache;
   private final JavaConfigCache javaConfigCache;
+  private boolean firstSecretIssueDetected;
   private final Map<URI, String> fileContentPerFileURI = new ConcurrentHashMap<>();
+  private final Map<URI, Integer> knownVersionPerFileURI = new ConcurrentHashMap<>();
+  private final Map<URI, Integer> analyzedVersionPerFileURI = new ConcurrentHashMap<>();
   private final Map<URI, Map<String, Issue>> issuesPerIdPerFileURI = new ConcurrentHashMap<>();
   private final Map<URI, List<ServerIssue>> taintVulnerabilitiesPerFile;
   private final Map<Path, List<Path>> jvmClasspathPerJavaHome = new ConcurrentHashMap<>();
@@ -125,29 +130,29 @@ public class AnalysisManager implements WorkspaceSettingsChangeListener, Workspa
   private final Map<URI, Long> eventMap = new ConcurrentHashMap<>();
 
   private final SonarLintTelemetry telemetry;
-  private final EnginesFactory enginesFactory;
   private final WorkspaceFoldersManager workspaceFoldersManager;
   private final SettingsManager settingsManager;
   private final ProjectBindingManager bindingManager;
   private final EventWatcher watcher;
   private final LanguageClientLogOutput lsLogOutput;
-  private StandaloneSonarLintEngine standaloneEngine;
+  private final ScmIgnoredCache filesIgnoredByScmCache;
+  private final StandaloneEngineManager standaloneEngineManager;
 
   private final ExecutorService analysisExecutor;
 
-  public AnalysisManager(LanguageClientLogOutput lsLogOutput, EnginesFactory enginesFactory, SonarLintExtendedLanguageClient client, SonarLintTelemetry telemetry,
+  public AnalysisManager(LanguageClientLogOutput lsLogOutput, StandaloneEngineManager standaloneEngineManager, SonarLintExtendedLanguageClient client, SonarLintTelemetry telemetry,
     WorkspaceFoldersManager workspaceFoldersManager, SettingsManager settingsManager, ProjectBindingManager bindingManager, FileTypeClassifier fileTypeClassifier,
     FileLanguageCache fileLanguageCache, JavaConfigCache javaConfigCache) {
-    this(lsLogOutput, enginesFactory, client, telemetry, workspaceFoldersManager, settingsManager, bindingManager, fileTypeClassifier, fileLanguageCache, javaConfigCache,
+    this(lsLogOutput, standaloneEngineManager, client, telemetry, workspaceFoldersManager, settingsManager, bindingManager, fileTypeClassifier, fileLanguageCache, javaConfigCache,
       new ConcurrentHashMap<>());
   }
 
-  public AnalysisManager(LanguageClientLogOutput lsLogOutput, EnginesFactory enginesFactory, SonarLintExtendedLanguageClient client, SonarLintTelemetry telemetry,
+  public AnalysisManager(LanguageClientLogOutput lsLogOutput, StandaloneEngineManager standaloneEngineManager, SonarLintExtendedLanguageClient client, SonarLintTelemetry telemetry,
     WorkspaceFoldersManager workspaceFoldersManager, SettingsManager settingsManager, ProjectBindingManager bindingManager, FileTypeClassifier fileTypeClassifier,
     FileLanguageCache fileLanguageCache, JavaConfigCache javaConfigCache,
     Map<URI, List<ServerIssue>> taintVulnerabilitiesPerFile) {
     this.lsLogOutput = lsLogOutput;
-    this.enginesFactory = enginesFactory;
+    this.standaloneEngineManager = standaloneEngineManager;
     this.client = client;
     this.telemetry = telemetry;
     this.workspaceFoldersManager = workspaceFoldersManager;
@@ -159,13 +164,7 @@ public class AnalysisManager implements WorkspaceSettingsChangeListener, Workspa
     this.analysisExecutor = Executors.newSingleThreadExecutor(Utils.threadFactory("SonarLint analysis", false));
     this.watcher = new EventWatcher();
     this.taintVulnerabilitiesPerFile = taintVulnerabilitiesPerFile;
-  }
-
-  synchronized StandaloneSonarLintEngine getOrCreateStandaloneEngine() {
-    if (standaloneEngine == null) {
-      standaloneEngine = enginesFactory.createStandaloneEngine();
-    }
-    return standaloneEngine;
+    this.filesIgnoredByScmCache = new ScmIgnoredCache(client);
   }
 
   public void didChangeWatchedFiles(List<FileEvent> changes) {
@@ -178,7 +177,7 @@ public class AnalysisManager implements WorkspaceSettingsChangeListener, Workspa
 
           Optional<ProjectBindingWrapper> binding = bindingManager.getBinding(fileUri);
 
-          SonarLintEngine engineForFile = binding.isPresent() ? binding.get().getEngine() : getOrCreateStandaloneEngine();
+          SonarLintEngine engineForFile = binding.isPresent() ? binding.get().getEngine() : standaloneEngineManager.getOrCreateStandaloneEngine();
 
           Optional<GetJavaConfigResponse> javaConfig = javaConfigCache.getOrFetch(fileUri);
           ClientInputFile inputFile = new InFolderClientInputFile(fileUri, getFileRelativePath(baseDir, fileUri), fileTypeClassifier.isTest(settings, fileUri, javaConfig));
@@ -200,22 +199,24 @@ public class AnalysisManager implements WorkspaceSettingsChangeListener, Workspa
     throw new IllegalArgumentException("Unknown event type: " + type);
   }
 
-  public void didOpen(URI fileUri, String languageId, String fileContent) {
+  public void didOpen(URI fileUri, String languageId, String fileContent, int version) {
     fileLanguageCache.put(fileUri, languageId);
     fileContentPerFileURI.put(fileUri, fileContent);
+    knownVersionPerFileURI.put(fileUri, version);
     analyzeAsync(fileUri, true);
   }
 
-  public void didChange(URI fileUri, String fileContent) {
+  public void didChange(URI fileUri, String fileContent, int version) {
     fileContentPerFileURI.put(fileUri, fileContent);
     eventMap.put(fileUri, System.currentTimeMillis());
+    knownVersionPerFileURI.put(fileUri, version);
   }
 
   private SonarLintEngine findEngineFor(WorkspaceFolderWrapper folder) {
     return bindingManager.getBinding(folder)
       .map(ProjectBindingWrapper::getEngine)
       .map(SonarLintEngine.class::cast)
-      .orElseGet(this::getOrCreateStandaloneEngine);
+      .orElseGet(standaloneEngineManager::getOrCreateStandaloneEngine);
   }
 
   @Override
@@ -276,9 +277,12 @@ public class AnalysisManager implements WorkspaceSettingsChangeListener, Workspa
     fileContentPerFileURI.remove(fileUri);
     javaConfigCache.remove(fileUri);
     issuesPerIdPerFileURI.remove(fileUri);
+    knownVersionPerFileURI.remove(fileUri);
+    analyzedVersionPerFileURI.remove(fileUri);
     taintVulnerabilitiesPerFile.remove(fileUri);
     eventMap.remove(fileUri);
     client.publishDiagnostics(newPublishDiagnostics(fileUri));
+    filesIgnoredByScmCache.remove(fileUri);
   }
 
   public void didSave(URI fileUri, String fileContent) {
@@ -301,6 +305,16 @@ public class AnalysisManager implements WorkspaceSettingsChangeListener, Workspa
       LOG.debug("Skipping analysis of Java file '{}' because SonarLint was unable to query project configuration (classpath, source level, ...)", fileUri);
       return;
     }
+    Boolean isIgnored = filesIgnoredByScmCache.isIgnored(fileUri).orElse(false);
+    if (Boolean.TRUE.equals(isIgnored)) {
+      LOG.debug("Skip analysis for SCM ignored file: '{}'", fileUri);
+      return;
+    }
+
+    if (knownVersionPerFileURI.containsKey(fileUri)) {
+      analyzedVersionPerFileURI.put(fileUri, knownVersionPerFileURI.get(fileUri));
+    }
+
     String content = fileContentPerFileURI.get(fileUri);
     if (content == null) {
       LOG.debug("Skipping analysis of file '{}', content has disappeared", fileUri);
@@ -361,17 +375,38 @@ public class AnalysisManager implements WorkspaceSettingsChangeListener, Workspa
       int foundIssues = newIssuesPerId.size();
       LOG.info("Found {} {}", foundIssues, pluralize(foundIssues, "issue"));
       client.publishDiagnostics(newPublishDiagnostics(fileUri));
+      telemetry.addReportedRules(collectAllRuleKeys(issuesPerIdPerFileURI));
     }
+  }
+
+  private Set<String> collectAllRuleKeys(Map<URI, Map<String, Issue>> issuesPerIdPerFileURI) {
+    return issuesPerIdPerFileURI.values().stream()
+      .flatMap(m -> m.values().stream())
+      .map(Issue::getRuleKey)
+      .collect(Collectors.toSet());
   }
 
   private IssueListener createIssueListener() {
     return issue -> {
+      showFirstSecretDetectionNotificationIfNeeded(issue);
       ClientInputFile inputFile = issue.getInputFile();
       if (inputFile != null) {
         URI uri = inputFile.getClientObject();
         issuesPerIdPerFileURI.computeIfAbsent(uri, u -> new HashMap<>()).put(UUID.randomUUID().toString(), issue);
       }
     };
+  }
+
+  void showFirstSecretDetectionNotificationIfNeeded(Issue issue) {
+    if (!firstSecretIssueDetected && issue.getRuleKey().startsWith(Language.SECRETS.getPluginKey())) {
+      client.showFirstSecretDetectionNotification();
+      firstSecretIssueDetected = true;
+    }
+  }
+
+  @CheckForNull
+  Integer getAnalyzedVersion(URI fileUri) {
+    return analyzedVersionPerFileURI.get(fileUri);
   }
 
   Optional<Issue> getIssueForDiagnostic(URI fileUri, Diagnostic d) {
@@ -448,7 +483,7 @@ public class AnalysisManager implements WorkspaceSettingsChangeListener, Workspa
       .build();
     LOG.debug("Analysis triggered on '{}' with configuration: \n{}", uri, configuration.toString());
 
-    StandaloneSonarLintEngine engine = getOrCreateStandaloneEngine();
+    StandaloneSonarLintEngine engine = standaloneEngineManager.getOrCreateStandaloneEngine();
     return analyzeWithTiming(() -> engine.analyze(configuration, issueListener, null, null),
       engine.getPluginDetails(),
       () -> {
@@ -643,7 +678,8 @@ public class AnalysisManager implements WorkspaceSettingsChangeListener, Workspa
       .thenComparing(Diagnostic::getMessage);
   }
 
-  public void initialize() {
+  public void initialize(Boolean firstSecretDetected) {
+    firstSecretIssueDetected = firstSecretDetected;
     watcher.start();
   }
 
@@ -651,9 +687,6 @@ public class AnalysisManager implements WorkspaceSettingsChangeListener, Workspa
     watcher.stopWatcher();
     eventMap.clear();
     analysisExecutor.shutdown();
-    if (standaloneEngine != null) {
-      standaloneEngine.stop();
-    }
   }
 
   public void analyzeAllOpenFilesInFolder(@Nullable WorkspaceFolderWrapper folder) {

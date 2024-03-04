@@ -30,6 +30,7 @@ import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Paths;
 import java.util.Collection;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -81,6 +82,7 @@ import org.sonarsource.sonarlint.ls.progress.ProgressManager;
 import org.sonarsource.sonarlint.ls.settings.SettingsManager;
 import org.sonarsource.sonarlint.ls.settings.WorkspaceFolderSettingsChangeListener;
 import org.sonarsource.sonarlint.ls.settings.WorkspaceSettingsChangeListener;
+import org.sonarsource.sonarlint.ls.standalone.StandaloneEngineManager;
 
 import static java.net.URI.create;
 import static java.util.Optional.ofNullable;
@@ -98,6 +100,7 @@ public class SonarLintLanguageServer implements SonarLintExtendedLanguageServer,
   private final AnalysisManager analysisManager;
   private final NodeJsRuntime nodeJsRuntime;
   private final EnginesFactory enginesFactory;
+  private final StandaloneEngineManager standaloneEngineManager;
   private final CommandManager commandManager;
   private final ProgressManager progressManager;
   private final ExecutorService threadPool;
@@ -110,7 +113,7 @@ public class SonarLintLanguageServer implements SonarLintExtendedLanguageServer,
    */
   private TraceValues traceLevel;
 
-  SonarLintLanguageServer(InputStream inputStream, OutputStream outputStream, Collection<URL> analyzers) {
+  SonarLintLanguageServer(InputStream inputStream, OutputStream outputStream, Collection<URL> analyzers, Collection<URL> extraAnalyzers) {
     this.threadPool = Executors.newCachedThreadPool(Utils.threadFactory("SonarLint LSP message processor", false));
     Launcher<SonarLintExtendedLanguageClient> launcher = new Launcher.Builder<SonarLintExtendedLanguageClient>()
       .setLocalService(this)
@@ -124,7 +127,6 @@ public class SonarLintLanguageServer implements SonarLintExtendedLanguageServer,
     this.httpClient = ApacheHttpClient.create();
     LanguageClientLogOutput lsLogOutput = new LanguageClientLogOutput(this.client);
     Loggers.setTarget(lsLogOutput);
-    this.telemetry = new SonarLintTelemetry(httpClient);
     this.workspaceFoldersManager = new WorkspaceFoldersManager();
     this.progressManager = new ProgressManager(client);
     this.settingsManager = new SettingsManager(this.client, this.workspaceFoldersManager, httpClient);
@@ -132,29 +134,32 @@ public class SonarLintLanguageServer implements SonarLintExtendedLanguageServer,
     FileTypeClassifier fileTypeClassifier = new FileTypeClassifier(fileLanguageCache);
     JavaConfigCache javaConfigCache = new JavaConfigCache(client, fileLanguageCache);
     this.enginesFactory = new EnginesFactory(analyzers, lsLogOutput, nodeJsRuntime,
-      new WorkspaceFoldersProvider(workspaceFoldersManager, fileTypeClassifier, javaConfigCache));
-    this.settingsManager.addListener(telemetry);
+      new WorkspaceFoldersProvider(workspaceFoldersManager, fileTypeClassifier, javaConfigCache), extraAnalyzers);
+    this.standaloneEngineManager = new StandaloneEngineManager(enginesFactory);
     this.settingsManager.addListener(lsLogOutput);
     this.bindingManager = new ProjectBindingManager(enginesFactory, workspaceFoldersManager, settingsManager, client, progressManager);
+    this.telemetry = new SonarLintTelemetry(httpClient, settingsManager, bindingManager, nodeJsRuntime, standaloneEngineManager);
+    this.settingsManager.addListener(telemetry);
     this.settingsManager.addListener((WorkspaceSettingsChangeListener) bindingManager);
     this.settingsManager.addListener((WorkspaceFolderSettingsChangeListener) bindingManager);
     this.workspaceFoldersManager.addListener(settingsManager);
     this.serverNotifications = new ServerNotifications(client, workspaceFoldersManager, telemetry, lsLogOutput);
     this.settingsManager.addListener((WorkspaceSettingsChangeListener) serverNotifications);
     this.settingsManager.addListener((WorkspaceFolderSettingsChangeListener) serverNotifications);
-    this.analysisManager = new AnalysisManager(lsLogOutput, enginesFactory, client, telemetry, workspaceFoldersManager, settingsManager, bindingManager, fileTypeClassifier,
+    this.analysisManager = new AnalysisManager(lsLogOutput, standaloneEngineManager, client, telemetry, workspaceFoldersManager, settingsManager, bindingManager,
+      fileTypeClassifier,
       fileLanguageCache, javaConfigCache);
     this.workspaceFoldersManager.addListener(analysisManager);
     bindingManager.setAnalysisManager(analysisManager);
     this.settingsManager.addListener(analysisManager);
-    this.commandManager = new CommandManager(client, settingsManager, bindingManager, analysisManager, telemetry);
+    this.commandManager = new CommandManager(client, settingsManager, bindingManager, analysisManager, telemetry, standaloneEngineManager);
     this.securityHotspotsHandlerServer = new SecurityHotspotsHandlerServer(lsLogOutput, bindingManager, client, telemetry);
     launcher.startListening();
   }
 
-  static void bySocket(int port, Collection<URL> analyzers) throws IOException {
+  static void bySocket(int port, Collection<URL> analyzers, Collection<URL> extraAnalyzers) throws IOException {
     Socket socket = new Socket("localhost", port);
-    new SonarLintLanguageServer(socket.getInputStream(), socket.getOutputStream(), analyzers);
+    new SonarLintLanguageServer(socket.getInputStream(), socket.getOutputStream(), analyzers, extraAnalyzers);
   }
 
   @Override
@@ -175,22 +180,19 @@ public class SonarLintLanguageServer implements SonarLintExtendedLanguageServer,
 
       String productName = (String) options.get("productName");
       String productVersion = (String) options.get("productVersion");
-      // Don't use params.getClientInfo().getName() because it is currently hardcoded to 'vscode'
-      // until https://github.com/microsoft/vscode-languageserver-node/pull/697 is released
-      // params.getClientInfo().getName()
-      String appName = (String) options.get("appName");
+      String appName = params.getClientInfo().getName();
       String workspaceName = (String) options.get("workspaceName");
       String clientVersion = params.getClientInfo().getVersion();
       String ideVersion = appName + " " + clientVersion;
-
+      boolean firstSecretDetected = Boolean.parseBoolean((String) options.get("firstSecretDetected"));
       Optional<String> typeScriptPath = ofNullable((String) options.get(TYPESCRIPT_LOCATION));
+      Map<String, Object> additionalAttributes = ofNullable((Map<String, Object>) options.get("additionalAttributes")).orElse(Collections.emptyMap());
 
       enginesFactory.initialize(typeScriptPath.map(Paths::get).orElse(null));
-      analysisManager.initialize();
+      analysisManager.initialize(firstSecretDetected);
 
-      securityHotspotsHandlerServer.init(appName, clientVersion, workspaceName);
-      telemetry.init(productKey, telemetryStorage, productName, productVersion, ideVersion,
-        bindingManager::usesConnectedMode, bindingManager::usesSonarCloud, bindingManager::devNotificationsDisabled, nodeJsRuntime::nodeVersion);
+      securityHotspotsHandlerServer.initialize(appName, clientVersion, workspaceName);
+      telemetry.initialize(productKey, telemetryStorage, productName, productVersion, ideVersion, additionalAttributes);
 
       ServerCapabilities c = new ServerCapabilities();
       c.setTextDocumentSync(getTextDocumentSyncOptions());
@@ -249,6 +251,7 @@ public class SonarLintLanguageServer implements SonarLintExtendedLanguageServer,
       threadPool.shutdown();
       httpClient.close();
       serverNotifications.shutdown();
+      standaloneEngineManager.shutdown();
       return new Object();
     });
   }
@@ -274,13 +277,13 @@ public class SonarLintLanguageServer implements SonarLintExtendedLanguageServer,
   @Override
   public void didOpen(DidOpenTextDocumentParams params) {
     URI uri = create(params.getTextDocument().getUri());
-    analysisManager.didOpen(uri, params.getTextDocument().getLanguageId(), params.getTextDocument().getText());
+    analysisManager.didOpen(uri, params.getTextDocument().getLanguageId(), params.getTextDocument().getText(), params.getTextDocument().getVersion());
   }
 
   @Override
   public void didChange(DidChangeTextDocumentParams params) {
     URI uri = create(params.getTextDocument().getUri());
-    analysisManager.didChange(uri, params.getContentChanges().get(0).getText());
+    analysisManager.didChange(uri, params.getContentChanges().get(0).getText(), params.getTextDocument().getVersion());
   }
 
   @Override

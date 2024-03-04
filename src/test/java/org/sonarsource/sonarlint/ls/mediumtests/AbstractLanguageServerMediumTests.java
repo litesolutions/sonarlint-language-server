@@ -142,7 +142,7 @@ public abstract class AbstractLanguageServerMediumTests {
     serverStdOut = new ByteArrayOutputStream();
     serverStdErr = new ByteArrayOutputStream();
     try {
-      new ServerMain(new PrintStream(serverStdOut), new PrintStream(serverStdErr)).startLanguageServer("" + port, java, js, php, py, html);
+      new ServerMain(new PrintStream(serverStdOut), new PrintStream(serverStdErr)).startLanguageServer("" + port, "-analyzers", java, js, php, py, html);
     } catch (Exception e) {
       e.printStackTrace();
       future.get(1, TimeUnit.SECONDS);
@@ -155,7 +155,7 @@ public abstract class AbstractLanguageServerMediumTests {
     lsProxy = future.get();
   }
 
-  protected static void initialize(Map<String, String> initializeOptions, WorkspaceFolder... initFolders) throws InterruptedException, ExecutionException {
+  protected static void initialize(Map<String, Object> initializeOptions, WorkspaceFolder... initFolders) throws InterruptedException, ExecutionException {
     InitializeParams initializeParams = new InitializeParams();
     initializeParams.setTrace("messages");
     initializeParams.setInitializationOptions(initializeOptions);
@@ -243,6 +243,7 @@ public abstract class AbstractLanguageServerMediumTests {
     CountDownLatch diagnosticsLatch = new CountDownLatch(0);
     CountDownLatch showRuleDescriptionLatch = new CountDownLatch(0);
     ShowRuleDescriptionParams ruleDesc;
+    boolean isIgnoredByScm = false;
 
     void clear() {
       diagnostics.clear();
@@ -342,6 +343,16 @@ public abstract class AbstractLanguageServerMediumTests {
 
     @Override
     public CompletableFuture<Void> showTaintVulnerability(ShowAllLocationsCommand.Param params) {
+      return CompletableFutures.computeAsync(null);
+    }
+
+    @Override
+    public CompletableFuture<Boolean> isIgnoredByScm(String fileUri) {
+      return CompletableFutures.computeAsync(cancelToken -> isIgnoredByScm);
+    }
+
+    @Override
+    public CompletableFuture<Void> showFirstSecretDetectionNotification() {
       return CompletableFutures.computeAsync(null);
     }
 

@@ -25,6 +25,7 @@ import java.time.Instant;
 import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
+
 import org.eclipse.lsp4j.CodeAction;
 import org.eclipse.lsp4j.CodeActionContext;
 import org.eclipse.lsp4j.CodeActionParams;
@@ -42,6 +43,11 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.sonar.api.server.rule.RuleParamType;
 import org.sonar.api.server.rule.RulesDefinition;
+import org.sonarsource.sonarlint.core.client.api.common.ClientInputFileEdit;
+import org.sonarsource.sonarlint.core.client.api.common.QuickFix;
+import org.sonarsource.sonarlint.core.client.api.common.TextEdit;
+import org.sonarsource.sonarlint.core.client.api.common.TextRange;
+import org.sonarsource.sonarlint.core.client.api.common.analysis.ClientInputFile;
 import org.sonarsource.sonarlint.core.client.api.common.analysis.Issue;
 import org.sonarsource.sonarlint.core.client.api.connected.ConnectedRuleDetails;
 import org.sonarsource.sonarlint.core.client.api.connected.ConnectedSonarLintEngine;
@@ -58,6 +64,7 @@ import org.sonarsource.sonarlint.ls.connected.ProjectBindingWrapper;
 import org.sonarsource.sonarlint.ls.settings.ServerConnectionSettings;
 import org.sonarsource.sonarlint.ls.settings.SettingsManager;
 import org.sonarsource.sonarlint.ls.settings.WorkspaceSettings;
+import org.sonarsource.sonarlint.ls.standalone.StandaloneEngineManager;
 
 import static java.util.Arrays.asList;
 import static java.util.Collections.emptyList;
@@ -94,6 +101,7 @@ class CommandManagerTests {
   private StandaloneSonarLintEngine mockStandaloneEngine;
   private SettingsManager mockSettingsManager;
   private SonarLintTelemetry mockTelemetry;
+  private StandaloneEngineManager standaloneEngineManager;
 
   @BeforeEach
   public void prepareMocks() {
@@ -107,9 +115,10 @@ class CommandManagerTests {
     mockClient = mock(SonarLintExtendedLanguageClient.class);
     mockAnalysisManager = mock(AnalysisManager.class);
     mockStandaloneEngine = mock(StandaloneSonarLintEngine.class);
-    when(mockAnalysisManager.getOrCreateStandaloneEngine()).thenReturn(mockStandaloneEngine);
+    standaloneEngineManager = mock(StandaloneEngineManager.class);
+    when(standaloneEngineManager.getOrCreateStandaloneEngine()).thenReturn(mockStandaloneEngine);
     mockTelemetry = mock(SonarLintTelemetry.class);
-    underTest = new CommandManager(mockClient, mockSettingsManager, bindingManager, mockAnalysisManager, mockTelemetry);
+    underTest = new CommandManager(mockClient, mockSettingsManager, bindingManager, mockAnalysisManager, mockTelemetry, standaloneEngineManager);
   }
 
   @Test
@@ -149,7 +158,7 @@ class CommandManagerTests {
     List<Either<Command, CodeAction>> codeActions = underTest.computeCodeActions(new CodeActionParams(FAKE_TEXT_DOCUMENT, FAKE_RANGE,
       new CodeActionContext(singletonList(new Diagnostic(FAKE_RANGE, "Foo", DiagnosticSeverity.Error, SONARLINT_SOURCE, "XYZ")))), NOP_CANCEL_TOKEN);
 
-    assertThat(codeActions).extracting(c -> c.getRight().getTitle()).containsOnly("Open description of SonarLint rule 'XYZ'");
+    assertThat(codeActions).extracting(c -> c.getRight().getTitle()).containsOnly("SonarLint: Open description of rule 'XYZ'");
   }
 
   @Test
@@ -164,7 +173,45 @@ class CommandManagerTests {
     List<Either<Command, CodeAction>> codeActions = underTest.computeCodeActions(new CodeActionParams(FAKE_TEXT_DOCUMENT, FAKE_RANGE,
       new CodeActionContext(singletonList(d))), NOP_CANCEL_TOKEN);
 
-    assertThat(codeActions).extracting(c -> c.getRight().getTitle()).containsOnly("Open description of SonarLint rule 'XYZ'", "Deactivate rule 'XYZ'");
+    assertThat(codeActions).extracting(c -> c.getRight().getTitle())
+      .containsOnly(
+        "SonarLint: Open description of rule 'XYZ'",
+        "SonarLint: Deactivate rule 'XYZ'"
+      );
+  }
+
+  @Test
+  void showQuickFixFromAnalyzer() {
+    URI fileUri = URI.create(FILE_URI);
+    when(bindingManager.getBinding(fileUri)).thenReturn(Optional.empty());
+
+    Diagnostic d = new Diagnostic(FAKE_RANGE, "Foo", DiagnosticSeverity.Error, SONARLINT_SOURCE, "XYZ");
+
+    Issue issue = mock(Issue.class);
+    when(mockAnalysisManager.getIssueForDiagnostic(any(URI.class), eq(d))).thenReturn(Optional.of(issue));
+
+    TextEdit textEdit = mock(TextEdit.class);
+    when(textEdit.newText()).thenReturn("");
+    when(textEdit.range()).thenReturn(new TextRange(1, 0,1, 1));
+    ClientInputFileEdit edit = mock(ClientInputFileEdit.class);
+    when(edit.textEdits()).thenReturn(Collections.singletonList(textEdit));
+    ClientInputFile target = mock(ClientInputFile.class);
+    when(target.uri()).thenReturn(fileUri);
+    when(edit.target()).thenReturn(target);
+    QuickFix fix = mock(QuickFix.class);
+    when(fix.message()).thenReturn("Fix the issue!");
+    when(fix.inputFileEdits()).thenReturn(Collections.singletonList(edit));
+    when(issue.quickFixes()).thenReturn(Collections.singletonList(fix));
+
+    List<Either<Command, CodeAction>> codeActions = underTest.computeCodeActions(new CodeActionParams(FAKE_TEXT_DOCUMENT, FAKE_RANGE,
+      new CodeActionContext(singletonList(d))), NOP_CANCEL_TOKEN);
+
+    assertThat(codeActions).extracting(c -> c.getRight().getTitle())
+      .containsExactly(
+        "SonarLint: Fix the issue!",
+        "SonarLint: Open description of rule 'XYZ'",
+        "SonarLint: Deactivate rule 'XYZ'"
+      );
   }
 
   @Test
@@ -194,9 +241,9 @@ class CommandManagerTests {
       new CodeActionContext(singletonList(d))), NOP_CANCEL_TOKEN);
 
     assertThat(codeActions).extracting(c -> c.getRight().getTitle()).containsOnly(
-      "Open description of SonarLint rule 'ruleKey'",
-      "Show all locations for taint vulnerability 'ruleKey'",
-      "Open taint vulnerability 'ruleKey' on 'connectionId'"
+      "SonarLint: Open description of rule 'ruleKey'",
+      "SonarLint: Show all locations for taint vulnerability 'ruleKey'",
+      "SonarLint: Open taint vulnerability 'ruleKey' on 'connectionId'"
     );
   }
 
@@ -215,7 +262,12 @@ class CommandManagerTests {
     List<Either<Command, CodeAction>> codeActions = underTest.computeCodeActions(new CodeActionParams(FAKE_TEXT_DOCUMENT, FAKE_RANGE,
       new CodeActionContext(singletonList(d))), NOP_CANCEL_TOKEN);
 
-    assertThat(codeActions).extracting(c -> c.getRight().getTitle()).containsOnly("Open description of SonarLint rule 'XYZ'", "Deactivate rule 'XYZ'", "Show all locations for issue 'XYZ'");
+    assertThat(codeActions).extracting(c -> c.getRight().getTitle())
+      .containsOnly(
+        "SonarLint: Open description of rule 'XYZ'",
+        "SonarLint: Deactivate rule 'XYZ'",
+        "SonarLint: Show all locations for issue 'XYZ'"
+      );
   }
 
   @Test
@@ -264,6 +316,10 @@ class CommandManagerTests {
     List<StandaloneRuleParam> params = singletonList(new DefaultStandaloneRuleParam(apiParam));
     when(ruleDetails.paramDetails()).thenReturn(params);
     when(mockStandaloneEngine.getRuleDetails(FAKE_RULE_KEY)).thenReturn(Optional.of(ruleDetails));
+    StandaloneSonarLintEngine sonarLintEngine = mock(StandaloneSonarLintEngine.class);
+    when(standaloneEngineManager.getOrCreateStandaloneEngine()).thenReturn(sonarLintEngine);
+    when(sonarLintEngine.getRuleDetails("javascript:S1234")).thenReturn(Optional.of(ruleDetails));
+
     underTest.executeCommand(
       new ExecuteCommandParams(SONARLINT_OPEN_RULE_DESCRIPTION_FROM_CODE_ACTION_COMMAND, asList(new JsonPrimitive(FAKE_RULE_KEY), new JsonPrimitive(FILE_URI))),
       NOP_CANCEL_TOKEN);

@@ -1,15 +1,15 @@
 <project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-  xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
   <modelVersion>4.0.0</modelVersion>
   <parent>
     <groupId>org.sonarsource.parent</groupId>
     <artifactId>parent</artifactId>
-    <version>54</version>
-    <relativePath />
+    <version>59.0.29</version>
+    <relativePath/>
   </parent>
   <groupId>org.sonarsource.sonarlint.ls</groupId>
   <artifactId>sonarlint-language-server</artifactId>
-  <version>1.5-lite</version>
+  <version>1.10.0.32540-lite</version>
   <packaging>jar</packaging>
   <name>SonarLint Language Server</name>
   <description>SonarLint Language Server</description>
@@ -23,9 +23,9 @@
   </issueManagement>
 
   <properties>
-    <sonarlint.core.version>4.13.0.19712-lite</sonarlint.core.version>
+    <sonarlint.core.version>6.0.0.32513-lite</sonarlint.core.version>
     <!-- analyzers used for tests -->
-    <sonar.java.version>6.5.0.22421</sonar.java.version>
+    <sonar.java.version>6.15.0.25849</sonar.java.version>
     <sonar.javascript.version>6.2.1.12157</sonar.javascript.version>
     <sonar.php.version>3.5.0.5655</sonar.php.version>
     <sonar.python.version>2.13.0.7236</sonar.python.version>
@@ -40,7 +40,7 @@
     <dependency>
       <groupId>org.eclipse.lsp4j</groupId>
       <artifactId>org.eclipse.lsp4j</artifactId>
-      <version>0.9.0</version>
+      <version>0.12.0</version>
     </dependency>
     <dependency>
       <groupId>org.sonarsource.sonarlint.core</groupId>
@@ -58,12 +58,22 @@
       <version>3.0.2</version>
       <scope>provided</scope>
     </dependency>
+    <dependency>
+      <groupId>org.apache.httpcomponents.core5</groupId>
+      <artifactId>httpcore5</artifactId>
+      <version>5.0.3</version>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.httpcomponents.client5</groupId>
+      <artifactId>httpclient5</artifactId>
+      <version>5.0.3</version>
+    </dependency>
 
     <!-- unit tests -->
     <dependency>
       <groupId>commons-io</groupId>
       <artifactId>commons-io</artifactId>
-      <version>2.6</version>
+      <version>2.7</version>
       <scope>test</scope>
     </dependency>
     <dependency>
@@ -93,6 +103,12 @@
   </dependencies>
 
   <build>
+    <resources>
+      <resource>
+        <directory>src/main/resources</directory>
+        <filtering>true</filtering>
+      </resource>
+    </resources>
     <plugins>
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
@@ -209,7 +225,7 @@
         <configuration>
           <trimStackTrace>false</trimStackTrace>
           <environmentVariables>
-            <PATH>${basedir}/src/test/resources/fake-ts-project/node;${env.PATH}</PATH>
+            <PATH>${basedir}/src/test/resources/fake-ts-project/node${path.separator}${env.PATH}</PATH>
           </environmentVariables>
         </configuration>
       </plugin>

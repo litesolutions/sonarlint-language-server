@@ -1,6 +1,6 @@
 /*
  * SonarLint Language Server
- * Copyright (C) 2009-2020 SonarSource SA
+ * Copyright (C) 2009-2021 SonarSource SA
  * mailto:info AT sonarsource DOT com
  *
  * This program is free software; you can redistribute it and/or
@@ -35,7 +35,7 @@ class ProjectBindingWrapperTests {
     ServerIssueTrackerWrapper issueTrackerWrapper = mock(ServerIssueTrackerWrapper.class);
     ProjectBindingWrapper underTest = new ProjectBindingWrapper("serverId", binding, engine, issueTrackerWrapper);
 
-    assertThat(underTest.getServerId()).isEqualTo("serverId");
+    assertThat(underTest.getConnectionId()).isEqualTo("serverId");
     assertThat(underTest.getBinding()).isEqualTo(binding);
     assertThat(underTest.getEngine()).isEqualTo(engine);
     assertThat(underTest.getServerIssueTracker()).isEqualTo(issueTrackerWrapper);

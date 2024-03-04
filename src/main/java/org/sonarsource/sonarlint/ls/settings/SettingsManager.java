@@ -1,6 +1,6 @@
 /*
  * SonarLint Language Server
- * Copyright (C) 2009-2020 SonarSource SA
+ * Copyright (C) 2009-2021 SonarSource SA
  * mailto:info AT sonarsource DOT com
  *
  * This program is free software; you can redistribute it and/or
@@ -21,7 +21,6 @@ package org.sonarsource.sonarlint.ls.settings;
 
 import java.net.URI;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
@@ -43,6 +42,7 @@ import org.sonarsource.sonarlint.ls.Utils;
 import org.sonarsource.sonarlint.ls.folders.WorkspaceFolderLifecycleListener;
 import org.sonarsource.sonarlint.ls.folders.WorkspaceFolderWrapper;
 import org.sonarsource.sonarlint.ls.folders.WorkspaceFoldersManager;
+import org.sonarsource.sonarlint.ls.http.ApacheHttpClient;
 
 import static java.util.Arrays.stream;
 import static org.apache.commons.lang.StringUtils.defaultIfBlank;
@@ -52,6 +52,7 @@ import static org.sonarsource.sonarlint.ls.Utils.interrupted;
 public class SettingsManager implements WorkspaceFolderLifecycleListener {
 
   private static final String ORGANIZATION_KEY = "organizationKey";
+  private static final String DISABLE_NOTIFICATIONS = "disableNotifications";
   private static final String PROJECT = "project";
   private static final String DEFAULT_CONNECTION_ID = "<default>";
   private static final String SERVER_URL = "serverUrl";
@@ -66,11 +67,13 @@ public class SettingsManager implements WorkspaceFolderLifecycleListener {
   private static final String OUTPUT = "output";
   private static final String SHOW_ANALYZER_LOGS = "showAnalyzerLogs";
   private static final String SHOW_VERBOSE_LOGS = "showVerboseLogs";
+  private static final String PATH_TO_NODE_EXECUTABLE = "pathToNodeExecutable";
 
   private static final Logger LOG = Loggers.get(SettingsManager.class);
 
   private final LanguageClient client;
   private final WorkspaceFoldersManager foldersManager;
+  private final ApacheHttpClient httpClient;
 
   private WorkspaceSettings currentSettings = null;
   private final CountDownLatch initLatch = new CountDownLatch(1);
@@ -82,9 +85,10 @@ public class SettingsManager implements WorkspaceFolderLifecycleListener {
   private final List<WorkspaceSettingsChangeListener> globalListeners = new ArrayList<>();
   private final List<WorkspaceFolderSettingsChangeListener> folderListeners = new ArrayList<>();
 
-  public SettingsManager(LanguageClient client, WorkspaceFoldersManager foldersManager) {
+  public SettingsManager(LanguageClient client, WorkspaceFoldersManager foldersManager, ApacheHttpClient httpClient) {
     this.client = client;
     this.foldersManager = foldersManager;
+    this.httpClient = httpClient;
     this.executor = Executors.newCachedThreadPool(Utils.threadFactory("SonarLint settings manager", false));
   }
 
@@ -120,7 +124,7 @@ public class SettingsManager implements WorkspaceFolderLifecycleListener {
     executor.execute(() -> {
       try {
         Map<String, Object> workspaceSettingsMap = requestSonarLintConfigurationAsync(null).get(1, TimeUnit.MINUTES);
-        WorkspaceSettings newWorkspaceSettings = parseSettings(workspaceSettingsMap);
+        WorkspaceSettings newWorkspaceSettings = parseSettings(workspaceSettingsMap, httpClient);
         WorkspaceSettings oldWorkspaceSettings = currentSettings;
         this.currentSettings = newWorkspaceSettings;
         WorkspaceFolderSettings newDefaultFolderSettings = parseFolderSettings(workspaceSettingsMap);
@@ -161,7 +165,7 @@ public class SettingsManager implements WorkspaceFolderLifecycleListener {
     if (uri != null) {
       configurationItem.setScopeUri(uri.toString());
     }
-    params.setItems(Arrays.asList(configurationItem));
+    params.setItems(Collections.singletonList(configurationItem));
     return client.configuration(params)
       .handle((r, t) -> {
         if (t != null) {
@@ -191,74 +195,82 @@ public class SettingsManager implements WorkspaceFolderLifecycleListener {
     }
   }
 
-  private static WorkspaceSettings parseSettings(Map<String, Object> params) {
+  private static WorkspaceSettings parseSettings(Map<String, Object> params, ApacheHttpClient httpClient) {
     boolean disableTelemetry = (Boolean) params.getOrDefault(DISABLE_TELEMETRY, false);
-    Map<String, ServerConnectionSettings> serverConnections = parseServerConnections(params);
+    String pathToNodeExecutable = (String) params.get(PATH_TO_NODE_EXECUTABLE);
+    Map<String, ServerConnectionSettings> serverConnections = parseServerConnections(params, httpClient);
+    @SuppressWarnings("unchecked")
     RulesConfiguration rulesConfiguration = RulesConfiguration.parse(((Map<String, Object>) params.getOrDefault(RULES, Collections.emptyMap())));
+    @SuppressWarnings("unchecked")
     Map<String, Object> consoleParams = ((Map<String, Object>) params.getOrDefault(OUTPUT, Collections.emptyMap()));
     boolean showAnalyzerLogs = (Boolean) consoleParams.getOrDefault(SHOW_ANALYZER_LOGS, false);
     boolean showVerboseLogs = (Boolean) consoleParams.getOrDefault(SHOW_VERBOSE_LOGS, false);
     return new WorkspaceSettings(disableTelemetry, serverConnections, rulesConfiguration.excludedRules(), rulesConfiguration.includedRules(), rulesConfiguration.ruleParameters(),
-      showAnalyzerLogs, showVerboseLogs);
+      showAnalyzerLogs, showVerboseLogs, pathToNodeExecutable);
   }
 
-  private static Map<String, ServerConnectionSettings> parseServerConnections(Map<String, Object> params) {
+  private static Map<String, ServerConnectionSettings> parseServerConnections(Map<String, Object> params, ApacheHttpClient httpClient) {
     @SuppressWarnings("unchecked")
     Map<String, Object> connectedModeMap = (Map<String, Object>) params.getOrDefault("connectedMode", Collections.emptyMap());
-    @SuppressWarnings("unchecked")
     Map<String, ServerConnectionSettings> serverConnections = new HashMap<>();
-    parseDeprecatedServerEntries(connectedModeMap, serverConnections);
+    parseDeprecatedServerEntries(connectedModeMap, serverConnections, httpClient);
+    @SuppressWarnings("unchecked")
     Map<String, Object> connectionsMap = (Map<String, Object>) connectedModeMap.getOrDefault("connections", Collections.emptyMap());
-    parseSonarQubeConnections(connectionsMap, serverConnections);
-    parseSonarCloudConnections(connectionsMap, serverConnections);
+    parseSonarQubeConnections(connectionsMap, serverConnections, httpClient);
+    parseSonarCloudConnections(connectionsMap, serverConnections, httpClient);
     return serverConnections;
   }
 
-  private static void parseDeprecatedServerEntries(Map<String, Object> connectedModeMap, Map<String, ServerConnectionSettings> serverConnections) {
-    List<Map<String, String>> deprecatedServersEntries = (List<Map<String, String>>) connectedModeMap.getOrDefault("servers", Collections.emptyList());
+  private static void parseDeprecatedServerEntries(Map<String, Object> connectedModeMap, Map<String, ServerConnectionSettings> serverConnections, ApacheHttpClient httpClient) {
+    @SuppressWarnings("unchecked")
+    List<Map<String, Object>> deprecatedServersEntries = (List<Map<String, Object>>) connectedModeMap.getOrDefault("servers", Collections.emptyList());
     deprecatedServersEntries.forEach(m -> {
       if (checkRequiredAttribute(m, "server", SERVER_ID, SERVER_URL, TOKEN)) {
-        String serverId = m.get(SERVER_ID);
-        String url = m.get(SERVER_URL);
-        String token = m.get(TOKEN);
-        String organization = m.get(ORGANIZATION_KEY);
-        ServerConnectionSettings connectionSettings = new ServerConnectionSettings(serverId, url, token, organization);
-        addIfUniqueConnectionId(serverConnections, serverId, connectionSettings);
-      }
-    });
-  }
-
-  private static void parseSonarQubeConnections(Map<String, Object> connectionsMap, Map<String, ServerConnectionSettings> serverConnections) {
-    List<Map<String, String>> sonarqubeEntries = (List<Map<String, String>>) connectionsMap.getOrDefault("sonarqube", Collections.emptyList());
-    sonarqubeEntries.forEach(m -> {
-      if (checkRequiredAttribute(m, "SonarQube server", SERVER_URL, TOKEN)) {
-        String connectionId = defaultIfBlank(m.get(CONNECTION_ID), DEFAULT_CONNECTION_ID);
-        String url = m.get(SERVER_URL);
-        String token = m.get(TOKEN);
-        ServerConnectionSettings connectionSettings = new ServerConnectionSettings(connectionId, url, token, null);
+        String connectionId = (String) m.get(SERVER_ID);
+        String url = (String) m.get(SERVER_URL);
+        String token = (String) m.get(TOKEN);
+        String organization = (String) m.get(ORGANIZATION_KEY);
+        ServerConnectionSettings connectionSettings = new ServerConnectionSettings(connectionId, url, token, organization, false, httpClient);
         addIfUniqueConnectionId(serverConnections, connectionId, connectionSettings);
       }
     });
   }
 
-  private static void parseSonarCloudConnections(Map<String, Object> connectionsMap, Map<String, ServerConnectionSettings> serverConnections) {
-    List<Map<String, String>> sonarcloudEntries = (List<Map<String, String>>) connectionsMap.getOrDefault("sonarcloud", Collections.emptyList());
+  private static void parseSonarQubeConnections(Map<String, Object> connectionsMap, Map<String, ServerConnectionSettings> serverConnections, ApacheHttpClient httpClient) {
+    @SuppressWarnings("unchecked")
+    List<Map<String, Object>> sonarqubeEntries = (List<Map<String, Object>>) connectionsMap.getOrDefault("sonarqube", Collections.emptyList());
+    sonarqubeEntries.forEach(m -> {
+      if (checkRequiredAttribute(m, "SonarQube server", SERVER_URL, TOKEN)) {
+        String connectionId = defaultIfBlank((String) m.get(CONNECTION_ID), DEFAULT_CONNECTION_ID);
+        String url = (String) m.get(SERVER_URL);
+        String token = (String) m.get(TOKEN);
+        boolean disableNotifications = (Boolean) m.getOrDefault(DISABLE_NOTIFICATIONS, false);
+        ServerConnectionSettings connectionSettings = new ServerConnectionSettings(connectionId, url, token, null, disableNotifications, httpClient);
+        addIfUniqueConnectionId(serverConnections, connectionId, connectionSettings);
+      }
+    });
+  }
+
+  private static void parseSonarCloudConnections(Map<String, Object> connectionsMap, Map<String, ServerConnectionSettings> serverConnections, ApacheHttpClient httpClient) {
+    @SuppressWarnings("unchecked")
+    List<Map<String, Object>> sonarcloudEntries = (List<Map<String, Object>>) connectionsMap.getOrDefault("sonarcloud", Collections.emptyList());
     sonarcloudEntries.forEach(m -> {
 
       if (checkRequiredAttribute(m, "SonarCloud", ORGANIZATION_KEY, TOKEN)) {
-        String connectionId = defaultIfBlank(m.get(CONNECTION_ID), DEFAULT_CONNECTION_ID);
-        String organizationKey = m.get(ORGANIZATION_KEY);
-        String token = m.get(TOKEN);
-        ServerConnectionSettings connectionSettings = new ServerConnectionSettings(connectionId, ServerConnectionSettings.SONARCLOUD_URL, token, organizationKey);
-        addIfUniqueConnectionId(serverConnections, connectionId, connectionSettings);
+        String connectionId = defaultIfBlank((String) m.get(CONNECTION_ID), DEFAULT_CONNECTION_ID);
+        String organizationKey = (String) m.get(ORGANIZATION_KEY);
+        String token = (String) m.get(TOKEN);
+        boolean disableNotifs = (Boolean) m.getOrDefault(DISABLE_NOTIFICATIONS, false);
+        addIfUniqueConnectionId(serverConnections, connectionId,
+          new ServerConnectionSettings(connectionId, ServerConnectionSettings.SONARCLOUD_URL, token, organizationKey, disableNotifs, httpClient));
       }
     });
   }
 
-  private static boolean checkRequiredAttribute(Map<String, String> map, String label, String... requiredAttributes) {
-    List<String> missing = stream(requiredAttributes).filter(att -> isBlank(map.get(att))).collect(Collectors.toList());
+  private static boolean checkRequiredAttribute(Map<String, Object> map, String label, String... requiredAttributes) {
+    List<String> missing = stream(requiredAttributes).filter(att -> isBlank((String) map.get(att))).collect(Collectors.toList());
     if (!missing.isEmpty()) {
-      LOG.error("Incomplete {} connection configuration. Required parameters must not be blank: {}.", label, missing.stream().collect(Collectors.joining(",")));
+      LOG.error("Incomplete {} connection configuration. Required parameters must not be blank: {}.", label, String.join(",", missing));
       return false;
     }
     return true;
@@ -292,16 +304,16 @@ public class SettingsManager implements WorkspaceFolderLifecycleListener {
         projectKey = projectBinding.get("projectKey");
         connectionId = projectBinding.getOrDefault(SERVER_ID, projectBinding.get(CONNECTION_ID));
         if (isBlank(connectionId)) {
-          if (currentSettings.getServers().isEmpty()) {
+          if (currentSettings.getServerConnections().isEmpty()) {
             LOG.error("No SonarQube/SonarCloud connections defined for your binding. Please update your settings.");
-          } else if (currentSettings.getServers().size() == 1) {
-            connectionId = currentSettings.getServers().keySet().iterator().next();
+          } else if (currentSettings.getServerConnections().size() == 1) {
+            connectionId = currentSettings.getServerConnections().keySet().iterator().next();
           } else {
             LOG.error("Multiple connections defined in your settings. Please specify a 'connectionId' in your binding with one of [{}] to disambiguate.",
-              currentSettings.getServers().keySet().stream().collect(Collectors.joining(",")));
+              String.join(",", currentSettings.getServerConnections().keySet()));
             connectionId = null;
           }
-        } else if (!currentSettings.getServers().containsKey(connectionId)) {
+        } else if (!currentSettings.getServerConnections().containsKey(connectionId)) {
           LOG.error("No SonarQube/SonarCloud connections defined for your binding with id '{}'. Please update your settings.", connectionId);
         }
       }

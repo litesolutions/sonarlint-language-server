@@ -1,6 +1,6 @@
 /*
  * SonarLint Language Server
- * Copyright (C) 2009-2020 SonarSource SA
+ * Copyright (C) 2009-2021 SonarSource SA
  * mailto:info AT sonarsource DOT com
  *
  * This program is free software; you can redistribute it and/or
@@ -25,6 +25,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.sonarsource.sonarlint.core.client.api.common.Language;
+import org.sonarsource.sonarlint.core.client.api.common.ModulesProvider;
 import org.sonarsource.sonarlint.core.client.api.connected.ConnectedGlobalConfiguration;
 import org.sonarsource.sonarlint.core.client.api.connected.ConnectedSonarLintEngine;
 import org.sonarsource.sonarlint.core.client.api.standalone.StandaloneGlobalConfiguration;
@@ -45,7 +46,7 @@ public class EnginesFactoryTests {
 
   @BeforeEach
   public void prepare() throws Exception {
-    underTest = new EnginesFactory(asList(create("file://plugin1.jar").toURL(), create("file://plugin2.jar").toURL()), mock(LanguageClientLogOutput.class));
+    underTest = new EnginesFactory(asList(create("file://plugin1.jar").toURL(), create("file://plugin2.jar").toURL()), mock(LanguageClientLogOutput.class), mock(NodeJsRuntime.class), mock(ModulesProvider.class));
     underTest = spy(underTest);
   }
 
@@ -109,5 +110,17 @@ public class EnginesFactoryTests {
     assertThat(createdEngine).isSameAs(mockEngine);
     ConnectedGlobalConfiguration capturedConfig = argCaptor.getValue();
     assertThat(capturedConfig.extraProperties()).isEmpty();
+  }
+
+  @Test
+  public void get_standalone_languages() {
+    assertThat(EnginesFactory.getStandaloneLanguages()).containsExactlyInAnyOrder(
+      Language.HTML,
+      Language.JAVA,
+      Language.JS,
+      Language.PHP,
+      Language.PYTHON,
+      Language.TS
+    );
   }
 }

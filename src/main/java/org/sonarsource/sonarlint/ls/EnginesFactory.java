@@ -1,6 +1,6 @@
 /*
  * SonarLint Language Server
- * Copyright (C) 2009-2020 SonarSource SA
+ * Copyright (C) 2009-2021 SonarSource SA
  * mailto:info AT sonarsource DOT com
  *
  * This program is free software; you can redistribute it and/or
@@ -21,9 +21,12 @@ package org.sonarsource.sonarlint.ls;
 
 import java.net.URL;
 import java.nio.file.Path;
+import java.util.Arrays;
 import java.util.Collection;
+import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Set;
 import javax.annotation.CheckForNull;
 import javax.annotation.Nullable;
 import org.sonar.api.utils.log.Logger;
@@ -31,6 +34,7 @@ import org.sonar.api.utils.log.Loggers;
 import org.sonarsource.sonarlint.core.ConnectedSonarLintEngineImpl;
 import org.sonarsource.sonarlint.core.StandaloneSonarLintEngineImpl;
 import org.sonarsource.sonarlint.core.client.api.common.Language;
+import org.sonarsource.sonarlint.core.client.api.common.ModulesProvider;
 import org.sonarsource.sonarlint.core.client.api.connected.ConnectedGlobalConfiguration;
 import org.sonarsource.sonarlint.core.client.api.connected.ConnectedSonarLintEngine;
 import org.sonarsource.sonarlint.core.client.api.standalone.StandaloneGlobalConfiguration;
@@ -60,9 +64,14 @@ public class EnginesFactory {
     Language.PLSQL
   };
 
-  public EnginesFactory(Collection<URL> standaloneAnalyzers, LanguageClientLogOutput lsLogOutput) {
+  private final NodeJsRuntime nodeJsRuntime;
+  private final ModulesProvider modulesProvider;
+
+  public EnginesFactory(Collection<URL> standaloneAnalyzers, LanguageClientLogOutput lsLogOutput, NodeJsRuntime nodeJsRuntime, ModulesProvider modulesProvider) {
     this.standaloneAnalyzers = standaloneAnalyzers;
     this.lsLogOutput = lsLogOutput;
+    this.nodeJsRuntime = nodeJsRuntime;
+    this.modulesProvider = modulesProvider;
   }
 
   public StandaloneSonarLintEngine createStandaloneEngine() {
@@ -73,7 +82,9 @@ public class EnginesFactory {
       StandaloneGlobalConfiguration configuration = StandaloneGlobalConfiguration.builder()
         .setExtraProperties(prepareExtraProps())
         .addEnabledLanguages(STANDALONE_LANGUAGES)
+        .setNodeJs(nodeJsRuntime.getNodeJsPath(), nodeJsRuntime.getNodeJsVersion())
         .addPlugins(standaloneAnalyzers.toArray(new URL[0]))
+        .setModulesProvider(modulesProvider)
         .setLogOutput(lsLogOutput)
         .build();
 
@@ -90,18 +101,20 @@ public class EnginesFactory {
     return new StandaloneSonarLintEngineImpl(configuration);
   }
 
-  public ConnectedSonarLintEngine createConnectedEngine(String serverId) {
+  public ConnectedSonarLintEngine createConnectedEngine(String connectionId) {
     ConnectedGlobalConfiguration configuration = ConnectedGlobalConfiguration.builder()
-      .setServerId(serverId)
+      .setConnectionId(connectionId)
       .setExtraProperties(prepareExtraProps())
       .addEnabledLanguages(STANDALONE_LANGUAGES)
       .addEnabledLanguages(CONNECTED_ADDITIONAL_LANGUAGES)
+      .setNodeJs(nodeJsRuntime.getNodeJsPath(), nodeJsRuntime.getNodeJsVersion())
+      .setModulesProvider(modulesProvider)
       .setLogOutput(lsLogOutput)
       .build();
 
     ConnectedSonarLintEngine engine = newConnectedEngine(configuration);
 
-    LOG.debug("Connected SonarLint engine started for '{}'", serverId);
+    LOG.debug("SonarLint engine started for connection '{}'", connectionId);
     return engine;
   }
 
@@ -120,4 +133,9 @@ public class EnginesFactory {
   public void initialize(@Nullable Path typeScriptPath) {
     this.typeScriptPath = typeScriptPath;
   }
+
+  public static Set<Language> getStandaloneLanguages() {
+    return EnumSet.copyOf(Arrays.asList(STANDALONE_LANGUAGES));
+  }
+
 }

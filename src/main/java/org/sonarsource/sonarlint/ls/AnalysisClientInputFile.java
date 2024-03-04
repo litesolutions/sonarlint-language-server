@@ -1,6 +1,6 @@
 /*
  * SonarLint Language Server
- * Copyright (C) 2009-2020 SonarSource SA
+ * Copyright (C) 2009-2021 SonarSource SA
  * mailto:info AT sonarsource DOT com
  *
  * This program is free software; you can redistribute it and/or
@@ -28,17 +28,18 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Paths;
 import javax.annotation.CheckForNull;
 import javax.annotation.Nullable;
+import org.sonarsource.sonarlint.core.client.api.common.Language;
 import org.sonarsource.sonarlint.core.client.api.common.analysis.ClientInputFile;
 
-public class DefaultClientInputFile implements ClientInputFile {
+public class AnalysisClientInputFile implements ClientInputFile {
 
   private final URI fileUri;
   private final String content;
-  private final String sqLanguage;
+  private final Language sqLanguage;
   private final String relativePath;
   private final boolean isTest;
 
-  public DefaultClientInputFile(URI uri, String relativePath, String content, boolean isTest, @Nullable String clientLanguageId) {
+  public AnalysisClientInputFile(URI uri, String relativePath, String content, boolean isTest, @Nullable String clientLanguageId) {
     this.relativePath = relativePath;
     this.fileUri = uri;
     this.content = content;
@@ -77,13 +78,13 @@ public class DefaultClientInputFile implements ClientInputFile {
   }
 
   @Override
-  public InputStream inputStream() throws IOException {
+  public InputStream inputStream() {
     return new ByteArrayInputStream(content.getBytes(StandardCharsets.UTF_8));
   }
 
   @Override
-  public String language() {
-    return this.sqLanguage;
+  public Language language() {
+    return sqLanguage;
   }
 
   @Override
@@ -92,33 +93,38 @@ public class DefaultClientInputFile implements ClientInputFile {
   }
 
   @CheckForNull
-  private static String toSqLanguage(@Nullable String clientLanguageId) {
+  private static Language toSqLanguage(@Nullable String clientLanguageId) {
     if (clientLanguageId == null) {
       return null;
     }
-    // See https://microsoft.github.io/language-server-protocol/specification#textdocumentitem
+    // See https://microsoft.github.io/language-server-protocol/specification#textDocumentItem
     switch (clientLanguageId) {
       case "javascript":
       case "javascriptreact":
       case "vue":
       case "vue component":
       case "babel es6 javascript":
-        return "js";
+        return Language.JS;
       case "python":
-        return "py";
+        return Language.PYTHON;
       case "typescript":
       case "typescriptreact":
-        return "ts";
-      case "objectscript-class":
-    	  return "objectscript";
-      case "objectscript":
-    	  return "objectscript";  
+        return Language.TS;
       case "html":
-        return "web";
+        return Language.HTML;
       case "oraclesql":
-        return "plsql";
+        return Language.PLSQL;
+      case "apex":
+      case "apex-anon":
+        // See https://github.com/forcedotcom/salesforcedx-vscode/blob/5e4b7715d1cb3d1ee2780780ed63f70f58e93b20/packages/salesforcedx-vscode-apex/package.json#L273
+        return Language.APEX;
+      case "objectscript-class":
+    	  return Language.OBJECTSCRIPT;
+      case "objectscript":
+    	  return Language.OBJECTSCRIPT;    
       default:
-        return clientLanguageId;
+        // Other supported languages map to the same key as the one used in SonarQube/SonarCloud
+        return Language.forKey(clientLanguageId).orElse(null);
     }
   }
 }

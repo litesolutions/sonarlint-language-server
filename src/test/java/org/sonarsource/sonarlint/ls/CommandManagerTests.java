@@ -1,6 +1,6 @@
 /*
  * SonarLint Language Server
- * Copyright (C) 2009-2020 SonarSource SA
+ * Copyright (C) 2009-2021 SonarSource SA
  * mailto:info AT sonarsource DOT com
  *
  * This program is free software; you can redistribute it and/or
@@ -21,6 +21,7 @@ package org.sonarsource.sonarlint.ls;
 
 import com.google.gson.JsonPrimitive;
 import java.net.URI;
+import java.time.Instant;
 import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
@@ -41,9 +42,12 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.sonar.api.server.rule.RuleParamType;
 import org.sonar.api.server.rule.RulesDefinition;
+import org.sonarsource.sonarlint.core.client.api.common.analysis.Issue;
 import org.sonarsource.sonarlint.core.client.api.connected.ConnectedRuleDetails;
 import org.sonarsource.sonarlint.core.client.api.connected.ConnectedSonarLintEngine;
 import org.sonarsource.sonarlint.core.client.api.connected.ProjectBinding;
+import org.sonarsource.sonarlint.core.client.api.connected.ServerIssue;
+import org.sonarsource.sonarlint.core.client.api.connected.ServerIssueLocation;
 import org.sonarsource.sonarlint.core.client.api.standalone.StandaloneRuleDetails;
 import org.sonarsource.sonarlint.core.client.api.standalone.StandaloneRuleParam;
 import org.sonarsource.sonarlint.core.client.api.standalone.StandaloneSonarLintEngine;
@@ -51,17 +55,25 @@ import org.sonarsource.sonarlint.core.container.standalone.rule.DefaultStandalon
 import org.sonarsource.sonarlint.ls.SonarLintExtendedLanguageClient.ShowRuleDescriptionParams;
 import org.sonarsource.sonarlint.ls.connected.ProjectBindingManager;
 import org.sonarsource.sonarlint.ls.connected.ProjectBindingWrapper;
+import org.sonarsource.sonarlint.ls.settings.ServerConnectionSettings;
+import org.sonarsource.sonarlint.ls.settings.SettingsManager;
+import org.sonarsource.sonarlint.ls.settings.WorkspaceSettings;
 
 import static java.util.Arrays.asList;
 import static java.util.Collections.emptyList;
 import static java.util.Collections.singletonList;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.sonarsource.sonarlint.ls.AnalysisManager.SONARLINT_SOURCE;
+import static org.sonarsource.sonarlint.ls.AnalysisManager.SONARQUBE_TAINT_SOURCE;
+import static org.sonarsource.sonarlint.ls.CommandManager.SONARLINT_BROWSE_TAINT_VULNERABILITY;
 import static org.sonarsource.sonarlint.ls.CommandManager.SONARLINT_OPEN_RULE_DESCRIPTION_FROM_CODE_ACTION_COMMAND;
+import static org.sonarsource.sonarlint.ls.CommandManager.SONARLINT_SHOW_TAINT_VULNERABILITY_FLOWS;
 import static org.sonarsource.sonarlint.ls.CommandManager.SONARLINT_UPDATE_ALL_BINDINGS_COMMAND;
 import static org.sonarsource.sonarlint.ls.CommandManager.getHtmlDescription;
 
@@ -80,10 +92,13 @@ class CommandManagerTests {
   private SonarLintExtendedLanguageClient mockClient;
   private AnalysisManager mockAnalysisManager;
   private StandaloneSonarLintEngine mockStandaloneEngine;
+  private SettingsManager mockSettingsManager;
+  private SonarLintTelemetry mockTelemetry;
 
   @BeforeEach
   public void prepareMocks() {
     bindingManager = mock(ProjectBindingManager.class);
+    mockSettingsManager = mock(SettingsManager.class);
     mockBinding = mock(ProjectBindingWrapper.class);
     mockConnectedEngine = mock(ConnectedSonarLintEngine.class);
     when(mockBinding.getEngine()).thenReturn(mockConnectedEngine);
@@ -93,7 +108,8 @@ class CommandManagerTests {
     mockAnalysisManager = mock(AnalysisManager.class);
     mockStandaloneEngine = mock(StandaloneSonarLintEngine.class);
     when(mockAnalysisManager.getOrCreateStandaloneEngine()).thenReturn(mockStandaloneEngine);
-    underTest = new CommandManager(mockClient, bindingManager, mockAnalysisManager);
+    mockTelemetry = mock(SonarLintTelemetry.class);
+    underTest = new CommandManager(mockClient, mockSettingsManager, bindingManager, mockAnalysisManager, mockTelemetry);
   }
 
   @Test
@@ -115,7 +131,7 @@ class CommandManagerTests {
   void updateAllBinding() {
     underTest.executeCommand(new ExecuteCommandParams(SONARLINT_UPDATE_ALL_BINDINGS_COMMAND, emptyList()), NOP_CANCEL_TOKEN);
 
-    verify(bindingManager).updateAllBindings();
+    verify(bindingManager).updateAllBindings(NOP_CANCEL_TOKEN, null);
   }
 
   @Test
@@ -140,10 +156,66 @@ class CommandManagerTests {
   void suggestDisableRuleForUnboundProject() {
     when(bindingManager.getBinding(URI.create(FILE_URI))).thenReturn(Optional.empty());
 
+    Diagnostic d = new Diagnostic(FAKE_RANGE, "Foo", DiagnosticSeverity.Error, SONARLINT_SOURCE, "XYZ");
+
+    Issue issue = mock(Issue.class);
+    when(mockAnalysisManager.getIssueForDiagnostic(any(URI.class), eq(d))).thenReturn(Optional.of(issue));
+
     List<Either<Command, CodeAction>> codeActions = underTest.computeCodeActions(new CodeActionParams(FAKE_TEXT_DOCUMENT, FAKE_RANGE,
-      new CodeActionContext(singletonList(new Diagnostic(FAKE_RANGE, "Foo", DiagnosticSeverity.Error, SONARLINT_SOURCE, "XYZ")))), NOP_CANCEL_TOKEN);
+      new CodeActionContext(singletonList(d))), NOP_CANCEL_TOKEN);
 
     assertThat(codeActions).extracting(c -> c.getRight().getTitle()).containsOnly("Open description of SonarLint rule 'XYZ'", "Deactivate rule 'XYZ'");
+  }
+
+  @Test
+  void codeActionsForTaint() {
+    String connId = "connectionId";
+    when(mockBinding.getConnectionId()).thenReturn(connId);
+    when(bindingManager.getBinding(URI.create(FILE_URI))).thenReturn(Optional.of(mockBinding));
+    WorkspaceSettings mockWorkspacesettings = mock(WorkspaceSettings.class);
+    ServerConnectionSettings serverSettings = mock(ServerConnectionSettings.class);
+    when(serverSettings.getServerUrl()).thenReturn("https://some.server.url");
+    when(mockWorkspacesettings.getServerConnections()).thenReturn(Collections.singletonMap(connId, serverSettings));
+    when(mockSettingsManager.getCurrentSettings()).thenReturn(mockWorkspacesettings);
+
+    Diagnostic d = new Diagnostic(FAKE_RANGE, "Foo", DiagnosticSeverity.Error, SONARQUBE_TAINT_SOURCE, "ruleKey");
+
+    ServerIssue issue = mock(ServerIssue.class);
+    when(issue.ruleKey()).thenReturn("ruleKey");
+    when(issue.creationDate()).thenReturn(Instant.EPOCH);
+    ServerIssue.Flow flow = mock(ServerIssue.Flow.class);
+    when(issue.getFlows()).thenReturn(Collections.singletonList(flow));
+    ServerIssueLocation location = mock(ServerIssueLocation.class);
+    when(flow.locations()).thenReturn(Collections.singletonList(location));
+    when(issue.key()).thenReturn("SomeIssueKey");
+    when(mockAnalysisManager.getTaintVulnerabilityForDiagnostic(any(URI.class), eq(d))).thenReturn(Optional.of(issue));
+
+    List<Either<Command, CodeAction>> codeActions = underTest.computeCodeActions(new CodeActionParams(FAKE_TEXT_DOCUMENT, FAKE_RANGE,
+      new CodeActionContext(singletonList(d))), NOP_CANCEL_TOKEN);
+
+    assertThat(codeActions).extracting(c -> c.getRight().getTitle()).containsOnly(
+      "Open description of SonarLint rule 'ruleKey'",
+      "Show all locations for taint vulnerability 'ruleKey'",
+      "Open taint vulnerability 'ruleKey' on 'connectionId'"
+    );
+  }
+
+  @Test
+  void suggestShowAllLocationsForIssueWithFlows() {
+    when(bindingManager.getBinding(URI.create(FILE_URI))).thenReturn(Optional.empty());
+
+    Diagnostic d = new Diagnostic(FAKE_RANGE, "Foo", DiagnosticSeverity.Error, SONARLINT_SOURCE, "XYZ");
+
+    Issue.Flow flow = mock(Issue.Flow.class);
+    List<Issue.Flow> flows = Collections.singletonList(flow);
+    Issue issue = mock(Issue.class);
+    when(issue.flows()).thenReturn(flows);
+    when(mockAnalysisManager.getIssueForDiagnostic(any(URI.class), eq(d))).thenReturn(Optional.of(issue));
+
+    List<Either<Command, CodeAction>> codeActions = underTest.computeCodeActions(new CodeActionParams(FAKE_TEXT_DOCUMENT, FAKE_RANGE,
+      new CodeActionContext(singletonList(d))), NOP_CANCEL_TOKEN);
+
+    assertThat(codeActions).extracting(c -> c.getRight().getTitle()).containsOnly("Open description of SonarLint rule 'XYZ'", "Deactivate rule 'XYZ'", "Show all locations for issue 'XYZ'");
   }
 
   @Test
@@ -171,8 +243,7 @@ class CommandManagerTests {
 
     ExecuteCommandParams params = new ExecuteCommandParams(
       SONARLINT_OPEN_RULE_DESCRIPTION_FROM_CODE_ACTION_COMMAND,
-      asList(new JsonPrimitive(FAKE_RULE_KEY), new JsonPrimitive(FILE_URI))
-    );
+      asList(new JsonPrimitive(FAKE_RULE_KEY), new JsonPrimitive(FILE_URI)));
     assertThrows(ResponseErrorException.class, () -> underTest.executeCommand(params, NOP_CANCEL_TOKEN));
   }
 
@@ -198,8 +269,33 @@ class CommandManagerTests {
       NOP_CANCEL_TOKEN);
 
     verify(mockClient).showRuleDescription(
-      new ShowRuleDescriptionParams(FAKE_RULE_KEY, "Name", "Desc", "Type", "Severity", params)
-    );
+      new ShowRuleDescriptionParams(FAKE_RULE_KEY, "Name", "Desc", "Type", "Severity", params));
   }
 
+  @Test
+  void browseTaintVulnerability() {
+    String issueUrl = "https://some.sq/issue/id";
+    underTest.executeCommand(new ExecuteCommandParams(SONARLINT_BROWSE_TAINT_VULNERABILITY, singletonList(new JsonPrimitive(issueUrl))), NOP_CANCEL_TOKEN);
+    verify(mockTelemetry).taintVulnerabilitiesInvestigatedRemotely();
+    verify(mockClient).browseTo(issueUrl);
+  }
+
+  @Test
+  void showTaintVulnerabilityFlows() {
+    String issueKey = "someIssueKey";
+    String connectionId = "connectionId";
+    ServerIssue issue = mock(ServerIssue.class);
+    when(issue.ruleKey()).thenReturn("ruleKey");
+    when(issue.creationDate()).thenReturn(Instant.EPOCH);
+    ServerIssue.Flow flow = mock(ServerIssue.Flow.class);
+    when(issue.getFlows()).thenReturn(Collections.singletonList(flow));
+    ServerIssueLocation location = mock(ServerIssueLocation.class);
+    when(flow.locations()).thenReturn(Collections.singletonList(location));
+    when(mockAnalysisManager.getTaintVulnerabilityByKey(issueKey)).thenReturn(Optional.of(issue));
+
+    underTest.executeCommand(new ExecuteCommandParams(SONARLINT_SHOW_TAINT_VULNERABILITY_FLOWS, asList(new JsonPrimitive(issueKey), new JsonPrimitive(connectionId))),
+      NOP_CANCEL_TOKEN);
+    verify(mockAnalysisManager).getTaintVulnerabilityByKey(issueKey);
+    verify(mockTelemetry).taintVulnerabilitiesInvestigatedLocally();
+  }
 }

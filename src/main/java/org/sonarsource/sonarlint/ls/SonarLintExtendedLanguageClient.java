@@ -1,6 +1,6 @@
 /*
  * SonarLint Language Server
- * Copyright (C) 2009-2020 SonarSource SA
+ * Copyright (C) 2009-2021 SonarSource SA
  * mailto:info AT sonarsource DOT com
  *
  * This program is free software; you can redistribute it and/or
@@ -29,11 +29,31 @@ import javax.annotation.Nullable;
 import org.eclipse.lsp4j.jsonrpc.services.JsonRequest;
 import org.eclipse.lsp4j.services.LanguageClient;
 import org.sonarsource.sonarlint.core.client.api.standalone.StandaloneRuleParam;
+import org.sonarsource.sonarlint.core.serverapi.hotspot.ServerHotspot;
+import org.sonarsource.sonarlint.ls.commands.ShowAllLocationsCommand;
 
 public interface SonarLintExtendedLanguageClient extends LanguageClient {
 
+  @JsonRequest("sonarlint/showSonarLintOutput")
+  CompletableFuture<Void> showSonarLintOutput();
+
+  @JsonRequest("sonarlint/openJavaHomeSettings")
+  CompletableFuture<Void> openJavaHomeSettings();
+
+  @JsonRequest("sonarlint/openPathToNodeSettings")
+  CompletableFuture<Void> openPathToNodeSettings();
+
+  @JsonRequest("sonarlint/openConnectionSettings")
+  CompletableFuture<Void> openConnectionSettings(boolean isSonarCloud);
+
   @JsonRequest("sonarlint/showRuleDescription")
   CompletableFuture<Void> showRuleDescription(ShowRuleDescriptionParams params);
+
+  @JsonRequest("sonarlint/showHotspot")
+  CompletableFuture<Void> showHotspot(ServerHotspot hotspot);
+
+  @JsonRequest("sonarlint/showTaintVulnerability")
+  CompletableFuture<Void> showTaintVulnerability(ShowAllLocationsCommand.Param params);
 
   class ShowRuleDescriptionParams {
     @Expose
@@ -50,7 +70,7 @@ public interface SonarLintExtendedLanguageClient extends LanguageClient {
     private final RuleParameter[] parameters;
 
     public ShowRuleDescriptionParams(String ruleKey, String ruleName, @Nullable String htmlDescription, @Nullable String type, String severity,
-                                     Collection<StandaloneRuleParam> params) {
+      Collection<StandaloneRuleParam> params) {
       this.key = ruleKey;
       this.name = ruleName;
       this.htmlDescription = htmlDescription;
@@ -160,12 +180,13 @@ public interface SonarLintExtendedLanguageClient extends LanguageClient {
   @JsonRequest("sonarlint/getJavaConfig")
   CompletableFuture<GetJavaConfigResponse> getJavaConfig(String fileUri);
 
-  public static class GetJavaConfigResponse {
+  class GetJavaConfigResponse {
 
     private String projectRoot;
     private String sourceLevel;
     private String[] classpath;
     private boolean isTest;
+    private String vmLocation;
 
     public String getProjectRoot() {
       return projectRoot;
@@ -199,6 +220,17 @@ public interface SonarLintExtendedLanguageClient extends LanguageClient {
       this.isTest = isTest;
     }
 
+    @CheckForNull
+    public String getVmLocation() {
+      return vmLocation;
+    }
+
+    public void setVmLocation(String vmLocation) {
+      this.vmLocation = vmLocation;
+    }
+
   }
 
+  @JsonRequest("sonarlint/browseTo")
+  CompletableFuture<Void> browseTo(String link);
 }

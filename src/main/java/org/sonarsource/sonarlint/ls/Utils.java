@@ -1,6 +1,6 @@
 /*
  * SonarLint Language Server
- * Copyright (C) 2009-2020 SonarSource SA
+ * Copyright (C) 2009-2021 SonarSource SA
  * mailto:info AT sonarsource DOT com
  *
  * This program is free software; you can redistribute it and/or
@@ -22,6 +22,9 @@ package org.sonarsource.sonarlint.ls;
 import com.google.gson.Gson;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonSyntaxException;
+import java.io.UnsupportedEncodingException;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.util.Map;
 import java.util.concurrent.ThreadFactory;
 import javax.annotation.CheckForNull;
@@ -63,4 +66,11 @@ public class Utils {
     Thread.currentThread().interrupt();
   }
 
+  public static String pluralize(long nbItems, String itemName) {
+    return pluralize(nbItems, itemName, itemName + "s");
+  }
+
+  public static String pluralize(long nbItems, String singular, String plural) {
+    return nbItems == 1 ? singular : plural;
+  }
 }

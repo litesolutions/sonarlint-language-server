@@ -1,6 +1,6 @@
 /*
  * SonarLint Language Server
- * Copyright (C) 2009-2020 SonarSource SA
+ * Copyright (C) 2009-2021 SonarSource SA
  * mailto:info AT sonarsource DOT com
  *
  * This program is free software; you can redistribute it and/or
@@ -20,38 +20,43 @@
 package org.sonarsource.sonarlint.ls.settings;
 
 import org.junit.jupiter.api.Test;
+import org.sonarsource.sonarlint.ls.http.ApacheHttpClient;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.mock;
 
 class ServerConnectionSettingsTests {
 
-  private static final ServerConnectionSettings WITHOUT_ORG = new ServerConnectionSettings("serverId", "serverUrl", "token", null);
-  private static final ServerConnectionSettings WITH_ORG = new ServerConnectionSettings("serverId", "serverUrl", "token", "myOrg");
+  private static final ApacheHttpClient httpClient = mock(ApacheHttpClient.class);
+  private static final ServerConnectionSettings WITHOUT_ORG = new ServerConnectionSettings("serverId", "serverUrl", "token", null, false, httpClient);
+  private static final ServerConnectionSettings WITH_ORG = new ServerConnectionSettings("serverId", "serverUrl", "token", "myOrg", false, httpClient);
 
   @Test
-  public void testHashCode() {
-    assertThat(WITH_ORG.hashCode()).isEqualTo(new ServerConnectionSettings("serverId", "serverUrl", "token", "myOrg").hashCode());
-    assertThat(WITHOUT_ORG.hashCode()).isEqualTo(new ServerConnectionSettings("serverId", "serverUrl", "token", null).hashCode());
+  void testHashCode() {
+    assertThat(new ServerConnectionSettings("serverId", "serverUrl", "token", "myOrg", false, httpClient)).hasSameHashCodeAs(WITH_ORG);
+    assertThat(new ServerConnectionSettings("serverId", "serverUrl", "token", null, false, httpClient)).hasSameHashCodeAs(WITHOUT_ORG);
   }
 
   @Test
-  public void testEquals() {
-    assertThat(WITH_ORG).isEqualTo(WITH_ORG);
-    assertThat(WITH_ORG).isNotEqualTo(null);
-    assertThat(WITH_ORG).isNotEqualTo("foo");
-    assertThat(WITH_ORG).isEqualTo(new ServerConnectionSettings("serverId", "serverUrl", "token", "myOrg"));
-    assertThat(WITHOUT_ORG).isEqualTo(new ServerConnectionSettings("serverId", "serverUrl", "token", null));
-    assertThat(WITHOUT_ORG).isNotEqualTo(WITH_ORG);
-
-    assertThat(WITH_ORG).isNotEqualTo(new ServerConnectionSettings("serverId2", "serverUrl", "token", "myOrg"));
-    assertThat(WITH_ORG).isNotEqualTo(new ServerConnectionSettings("serverId", "serverUrl2", "token", "myOrg"));
-    assertThat(WITH_ORG).isNotEqualTo(new ServerConnectionSettings("serverId", "serverUrl", "token2", "myOrg"));
-    assertThat(WITH_ORG).isNotEqualTo(new ServerConnectionSettings("serverId", "serverUrl", "token", "myOrg2"));
+  void testEquals() {
+    assertThat(WITH_ORG)
+      .isEqualTo(WITH_ORG)
+      .isEqualTo(new ServerConnectionSettings("serverId", "serverUrl", "token", "myOrg", false, httpClient))
+      .isNotEqualTo(null)
+      .isNotEqualTo("foo")
+      .isNotEqualTo(new ServerConnectionSettings("serverId2", "serverUrl", "token", "myOrg", false, httpClient))
+      .isNotEqualTo(new ServerConnectionSettings("serverId", "serverUrl2", "token", "myOrg", false, httpClient))
+      .isNotEqualTo(new ServerConnectionSettings("serverId", "serverUrl", "token2", "myOrg", false, httpClient))
+      .isNotEqualTo(new ServerConnectionSettings("serverId", "serverUrl", "token", "myOrg2", false, httpClient))
+      .isNotEqualTo(new ServerConnectionSettings("serverId", "serverUrl", "token", "myOrg2", true, httpClient));
+    assertThat(WITHOUT_ORG)
+      .isEqualTo(new ServerConnectionSettings("serverId", "serverUrl", "token", null, false, httpClient))
+      .isNotEqualTo(WITH_ORG);
   }
 
   @Test
-  public void testToString() {
-    assertThat(WITH_ORG.toString()).isEqualTo("ServerConnectionSettings[serverId=serverId,serverUrl=serverUrl,token=token,organizationKey=myOrg]");
+  void testToString() {
+    assertThat(WITH_ORG).hasToString("ServerConnectionSettings[connectionId=serverId,serverUrl=serverUrl,token=token,disableNotifications=false,organizationKey=myOrg]");
   }
 
 }

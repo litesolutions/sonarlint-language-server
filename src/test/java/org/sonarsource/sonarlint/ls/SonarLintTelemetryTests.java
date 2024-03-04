@@ -1,6 +1,6 @@
 /*
  * SonarLint Language Server
- * Copyright (C) 2009-2020 SonarSource SA
+ * Copyright (C) 2009-2021 SonarSource SA
  * mailto:info AT sonarsource DOT com
  *
  * This program is free software; you can redistribute it and/or
@@ -23,15 +23,18 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.Collections;
 import java.util.concurrent.TimeUnit;
+import java.util.function.BooleanSupplier;
 import java.util.function.Supplier;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.RegisterExtension;
 import org.sonar.api.utils.log.LogTesterJUnit5;
-import org.sonarsource.sonarlint.core.telemetry.TelemetryClient;
+import org.sonarsource.sonarlint.core.client.api.common.Language;
+import org.sonarsource.sonarlint.core.telemetry.TelemetryHttpClient;
 import org.sonarsource.sonarlint.core.telemetry.TelemetryManager;
 import org.sonarsource.sonarlint.core.telemetry.TelemetryPathManager;
+import org.sonarsource.sonarlint.ls.http.ApacheHttpClient;
 import org.sonarsource.sonarlint.ls.settings.WorkspaceSettings;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -43,7 +46,7 @@ import static org.sonarsource.sonarlint.ls.SonarLintTelemetry.getStoragePath;
 
 class SonarLintTelemetryTests {
   private SonarLintTelemetry telemetry;
-  private TelemetryManager telemetryManager = mock(TelemetryManager.class);
+  private final TelemetryManager telemetryManager = mock(TelemetryManager.class);
 
   @RegisterExtension
   public LogTesterJUnit5 logTester = new LogTesterJUnit5();
@@ -60,18 +63,18 @@ class SonarLintTelemetryTests {
 
   private SonarLintTelemetry createTelemetry() {
     when(telemetryManager.isEnabled()).thenReturn(true);
-    SonarLintTelemetry telemetry = new SonarLintTelemetry() {
+    SonarLintTelemetry telemetry = new SonarLintTelemetry(mock(ApacheHttpClient.class)) {
       @Override
-      TelemetryManager newTelemetryManager(Path path, TelemetryClient client, Supplier<Boolean> usesConnectedMode, Supplier<Boolean> usesSonarCloud) {
+      TelemetryManager newTelemetryManager(Path path, TelemetryHttpClient client, BooleanSupplier usesConnectedMode, BooleanSupplier usesSonarCloud, BooleanSupplier devNotificationsDisabled, Supplier<String> nodeVersion) {
         return telemetryManager;
       }
     };
-    telemetry.init(Paths.get("dummy"), "product", "version", "ideVersion", () -> true, () -> true);
+    telemetry.init(Paths.get("dummy"), "product", "version", "ideVersion", () -> true, () -> true, () -> true, () -> "");
     return telemetry;
   }
 
   @Test
-  public void disable_property_should_disable_telemetry() throws Exception {
+  void disable_property_should_disable_telemetry() throws Exception {
     assertThat(createTelemetry().enabled()).isTrue();
 
     System.setProperty(SonarLintTelemetry.DISABLE_PROPERTY_KEY, "true");
@@ -79,7 +82,7 @@ class SonarLintTelemetryTests {
   }
 
   @Test
-  public void stop_should_trigger_stop_telemetry() {
+  void stop_should_trigger_stop_telemetry() {
     when(telemetryManager.isEnabled()).thenReturn(true);
     telemetry.stop();
     verify(telemetryManager).isEnabled();
@@ -87,7 +90,7 @@ class SonarLintTelemetryTests {
   }
 
   @Test
-  public void test_scheduler() {
+  void test_scheduler() {
     assertThat((Object) telemetry.scheduledFuture).isNotNull();
     assertThat(telemetry.scheduledFuture.getDelay(TimeUnit.MINUTES)).isBetween(0L, 1L);
     telemetry.stop();
@@ -95,12 +98,12 @@ class SonarLintTelemetryTests {
   }
 
   @Test
-  public void create_telemetry_manager() {
-    assertThat(telemetry.newTelemetryManager(Paths.get(""), mock(TelemetryClient.class), () -> true, () -> true)).isNotNull();
+  void create_telemetry_manager() {
+    assertThat(telemetry.newTelemetryManager(Paths.get(""), mock(TelemetryHttpClient.class), () -> true, () -> true, () -> true, () -> "")).isNotNull();
   }
 
   @Test
-  public void optOut_should_trigger_disable_telemetry() {
+  void optOut_should_trigger_disable_telemetry() {
     when(telemetryManager.isEnabled()).thenReturn(true);
     telemetry.onChange(null, newWorkspaceSettingsWithTelemetrySetting(true));
     verify(telemetryManager).disable();
@@ -108,7 +111,7 @@ class SonarLintTelemetryTests {
   }
 
   @Test
-  public void should_not_opt_out_twice() {
+  void should_not_opt_out_twice() {
     when(telemetryManager.isEnabled()).thenReturn(false);
     telemetry.onChange(null, newWorkspaceSettingsWithTelemetrySetting(true));
     verify(telemetryManager).isEnabled();
@@ -116,18 +119,18 @@ class SonarLintTelemetryTests {
   }
 
   @Test
-  public void optIn_should_trigger_enable_telemetry() {
+  void optIn_should_trigger_enable_telemetry() {
     when(telemetryManager.isEnabled()).thenReturn(false);
     telemetry.onChange(null, newWorkspaceSettingsWithTelemetrySetting(false));
     verify(telemetryManager).enable();
   }
 
   private static WorkspaceSettings newWorkspaceSettingsWithTelemetrySetting(boolean disableTelemetry) {
-    return new WorkspaceSettings(disableTelemetry, Collections.emptyMap(), Collections.emptyList(), Collections.emptyList(), Collections.emptyMap(), false, false);
+    return new WorkspaceSettings(disableTelemetry, Collections.emptyMap(), Collections.emptyList(), Collections.emptyList(), Collections.emptyMap(), false, false, null);
   }
 
   @Test
-  public void upload_should_trigger_upload_when_enabled() {
+  void upload_should_trigger_upload_when_enabled() {
     when(telemetryManager.isEnabled()).thenReturn(true);
     telemetry.upload();
     verify(telemetryManager).isEnabled();
@@ -135,7 +138,7 @@ class SonarLintTelemetryTests {
   }
 
   @Test
-  public void upload_should_not_trigger_upload_when_disabled() {
+  void upload_should_not_trigger_upload_when_disabled() {
     when(telemetryManager.isEnabled()).thenReturn(false);
     telemetry.upload();
     verify(telemetryManager).isEnabled();
@@ -143,7 +146,7 @@ class SonarLintTelemetryTests {
   }
 
   @Test
-  public void analysisDoneOnMultipleFiles_should_trigger_analysisDoneOnMultipleFiles_when_enabled() {
+  void analysisDoneOnMultipleFiles_should_trigger_analysisDoneOnMultipleFiles_when_enabled() {
     when(telemetryManager.isEnabled()).thenReturn(true);
     telemetry.analysisDoneOnMultipleFiles();
     verify(telemetryManager).isEnabled();
@@ -151,7 +154,7 @@ class SonarLintTelemetryTests {
   }
 
   @Test
-  public void analysisDoneOnMultipleFiles_should_not_trigger_analysisDoneOnMultipleFiles_when_disabled() {
+  void analysisDoneOnMultipleFiles_should_not_trigger_analysisDoneOnMultipleFiles_when_disabled() {
     when(telemetryManager.isEnabled()).thenReturn(false);
     telemetry.analysisDoneOnMultipleFiles();
     verify(telemetryManager).isEnabled();
@@ -159,47 +162,130 @@ class SonarLintTelemetryTests {
   }
 
   @Test
-  public void analysisDoneOnSingleFile_should_trigger_analysisDoneOnSingleFile_when_enabled() {
+  void analysisDoneOnSingleFile_should_trigger_analysisDoneOnSingleFile_when_enabled() {
     when(telemetryManager.isEnabled()).thenReturn(true);
-    telemetry.analysisDoneOnSingleFile("java", 1000);
+    telemetry.analysisDoneOnSingleLanguage(Language.JAVA, 1000);
     verify(telemetryManager).isEnabled();
-    verify(telemetryManager).analysisDoneOnSingleFile("java", 1000);
+    verify(telemetryManager).analysisDoneOnSingleLanguage(Language.JAVA, 1000);
   }
 
   @Test
-  public void analysisDoneOnSingleFile_should_not_trigger_analysisDoneOnSingleFile_when_disabled() {
+  void analysisDoneOnSingleFile_should_not_trigger_analysisDoneOnSingleFile_when_disabled() {
     when(telemetryManager.isEnabled()).thenReturn(false);
-    telemetry.analysisDoneOnSingleFile("java", 1000);
+    telemetry.analysisDoneOnSingleLanguage(Language.JAVA, 1000);
     verify(telemetryManager).isEnabled();
     verifyNoMoreInteractions(telemetryManager);
   }
 
   @Test
-  public void should_start_disabled_when_storagePath_null() {
+  void devNotificationsReceived_when_enabled() {
     when(telemetryManager.isEnabled()).thenReturn(true);
-    SonarLintTelemetry telemetry = new SonarLintTelemetry() {
+    String eventType = "eventType";
+    telemetry.devNotificationsReceived(eventType);
+    verify(telemetryManager).isEnabled();
+    verify(telemetryManager).devNotificationsReceived(eventType);
+  }
+
+  @Test
+  void devNotificationsReceived_when_disabled() {
+    when(telemetryManager.isEnabled()).thenReturn(false);
+    telemetry.devNotificationsClicked("ignored");
+    verify(telemetryManager).isEnabled();
+    verifyNoMoreInteractions(telemetryManager);
+  }
+
+
+  @Test
+  void devNotificationsClicked_when_enabled() {
+    when(telemetryManager.isEnabled()).thenReturn(true);
+    String eventType = "eventType";
+    telemetry.devNotificationsClicked(eventType);
+    verify(telemetryManager).isEnabled();
+    verify(telemetryManager).devNotificationsClicked(eventType);
+  }
+
+  @Test
+  void devNotificationsClicked_when_disabled() {
+    when(telemetryManager.isEnabled()).thenReturn(false);
+    telemetry.devNotificationsClicked("ignored");
+    verify(telemetryManager).isEnabled();
+    verifyNoMoreInteractions(telemetryManager);
+  }
+
+  @Test
+  void showHotspotRequestReceived_when_enabled() {
+    when(telemetryManager.isEnabled()).thenReturn(true);
+    telemetry.showHotspotRequestReceived();
+    verify(telemetryManager).isEnabled();
+    verify(telemetryManager).showHotspotRequestReceived();
+  }
+
+  @Test
+  void showHotspotRequestReceived_when_disabled() {
+    when(telemetryManager.isEnabled()).thenReturn(false);
+    telemetry.showHotspotRequestReceived();
+    verify(telemetryManager).isEnabled();
+    verifyNoMoreInteractions(telemetryManager);
+  }
+
+  @Test
+  void taintVulnerabilitiesInvestigatedLocally_when_enabled() {
+    when(telemetryManager.isEnabled()).thenReturn(true);
+    telemetry.taintVulnerabilitiesInvestigatedLocally();
+    verify(telemetryManager).isEnabled();
+    verify(telemetryManager).taintVulnerabilitiesInvestigatedLocally();
+  }
+
+  @Test
+  void taintVulnerabilitiesInvestigatedLocally_when_disabled() {
+    when(telemetryManager.isEnabled()).thenReturn(false);
+    telemetry.taintVulnerabilitiesInvestigatedLocally();
+    verify(telemetryManager).isEnabled();
+    verifyNoMoreInteractions(telemetryManager);
+  }
+
+  @Test
+  void taintVulnerabilitiesInvestigatedRemotely_when_enabled() {
+    when(telemetryManager.isEnabled()).thenReturn(true);
+    telemetry.taintVulnerabilitiesInvestigatedRemotely();
+    verify(telemetryManager).isEnabled();
+    verify(telemetryManager).taintVulnerabilitiesInvestigatedRemotely();
+  }
+
+  @Test
+  void taintVulnerabilitiesInvestigatedRemotely_when_disabled() {
+    when(telemetryManager.isEnabled()).thenReturn(false);
+    telemetry.taintVulnerabilitiesInvestigatedRemotely();
+    verify(telemetryManager).isEnabled();
+    verifyNoMoreInteractions(telemetryManager);
+  }
+
+  @Test
+  void should_start_disabled_when_storagePath_null() {
+    when(telemetryManager.isEnabled()).thenReturn(true);
+    SonarLintTelemetry telemetry = new SonarLintTelemetry(mock(ApacheHttpClient.class)) {
       @Override
-      TelemetryManager newTelemetryManager(Path path, TelemetryClient client, Supplier<Boolean> usesConnectedMode, Supplier<Boolean> usesSonarCloud) {
+      TelemetryManager newTelemetryManager(Path path, TelemetryHttpClient client, BooleanSupplier usesConnectedMode, BooleanSupplier usesSonarCloud, BooleanSupplier devNotificationsDisabled, Supplier<String> nodeVersion) {
         return telemetryManager;
       }
     };
-    telemetry.init(null, "product", "version", "ideVersion", () -> true, () -> true);
+    telemetry.init(null, "product", "version", "ideVersion", () -> true, () -> true, () -> true, () -> "");
     assertThat(telemetry.enabled()).isFalse();
   }
 
   @Test
-  public void getStoragePath_should_return_null_when_configuration_missing() {
+  void getStoragePath_should_return_null_when_configuration_missing() {
     assertThat(getStoragePath(null, null)).isNull();
   }
 
   @Test
-  public void getStoragePath_should_return_old_path_when_product_key_missing() {
+  void getStoragePath_should_return_old_path_when_product_key_missing() {
     String oldStorage = "dummy";
     assertThat(getStoragePath(null, oldStorage)).isEqualTo(Paths.get(oldStorage));
   }
 
   @Test
-  public void getStoragePath_should_return_new_path_when_product_key_present() {
+  void getStoragePath_should_return_new_path_when_product_key_present() {
     String productKey = "vim";
     assertThat(getStoragePath(productKey, "dummy")).isEqualTo(TelemetryPathManager.getPath(productKey));
   }

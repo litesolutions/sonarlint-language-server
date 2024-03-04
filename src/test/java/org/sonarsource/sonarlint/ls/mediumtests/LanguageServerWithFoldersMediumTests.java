@@ -1,6 +1,6 @@
 /*
  * SonarLint Language Server
- * Copyright (C) 2009-2020 SonarSource SA
+ * Copyright (C) 2009-2021 SonarSource SA
  * mailto:info AT sonarsource DOT com
  *
  * This program is free software; you can redistribute it and/or
@@ -44,7 +44,7 @@ class LanguageServerWithFoldersMediumTests extends AbstractLanguageServerMediumT
     Path fakeTypeScriptProjectPath = Paths.get("src/test/resources/fake-ts-project").toAbsolutePath();
 
     client.settingsLatch = new CountDownLatch(1);
-    String folderUri = "some://init_uri";
+    String folderUri = "file:///init_uri";
     client.folderSettings.put(folderUri, buildSonarLintSettingsSection("some pattern", null, null, true));
 
     initialize(ImmutableMap.<String, String>builder()

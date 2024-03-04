@@ -1,6 +1,6 @@
 /*
  * SonarLint Language Server
- * Copyright (C) 2009-2020 SonarSource SA
+ * Copyright (C) 2009-2021 SonarSource SA
  * mailto:info AT sonarsource DOT com
  *
  * This program is free software; you can redistribute it and/or
@@ -50,6 +50,8 @@ import java.util.function.Function;
 import java.util.regex.Pattern;
 import javax.annotation.Nullable;
 import org.assertj.core.api.iterable.ThrowingExtractor;
+import org.eclipse.lsp4j.ClientCapabilities;
+import org.eclipse.lsp4j.ClientInfo;
 import org.eclipse.lsp4j.ConfigurationItem;
 import org.eclipse.lsp4j.ConfigurationParams;
 import org.eclipse.lsp4j.Diagnostic;
@@ -59,6 +61,7 @@ import org.eclipse.lsp4j.DidCloseTextDocumentParams;
 import org.eclipse.lsp4j.DidOpenTextDocumentParams;
 import org.eclipse.lsp4j.DidSaveTextDocumentParams;
 import org.eclipse.lsp4j.InitializeParams;
+import org.eclipse.lsp4j.InitializeResult;
 import org.eclipse.lsp4j.InitializedParams;
 import org.eclipse.lsp4j.MessageActionItem;
 import org.eclipse.lsp4j.MessageParams;
@@ -68,6 +71,7 @@ import org.eclipse.lsp4j.TextDocumentContentChangeEvent;
 import org.eclipse.lsp4j.TextDocumentIdentifier;
 import org.eclipse.lsp4j.TextDocumentItem;
 import org.eclipse.lsp4j.VersionedTextDocumentIdentifier;
+import org.eclipse.lsp4j.WindowClientCapabilities;
 import org.eclipse.lsp4j.WorkspaceFolder;
 import org.eclipse.lsp4j.jsonrpc.CompletableFutures;
 import org.eclipse.lsp4j.jsonrpc.Launcher;
@@ -77,10 +81,12 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.io.TempDir;
+import org.sonarsource.sonarlint.core.serverapi.hotspot.ServerHotspot;
 import org.sonarsource.sonarlint.ls.ServerMain;
 import org.sonarsource.sonarlint.ls.SonarLintExtendedLanguageClient;
 import org.sonarsource.sonarlint.ls.SonarLintExtendedLanguageServer;
 import org.sonarsource.sonarlint.ls.SonarLintTelemetry;
+import org.sonarsource.sonarlint.ls.commands.ShowAllLocationsCommand;
 
 import static java.util.Arrays.asList;
 import static java.util.Collections.singletonList;
@@ -91,7 +97,7 @@ import static org.hamcrest.Matchers.equalTo;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
-abstract class AbstractLanguageServerMediumTests {
+public abstract class AbstractLanguageServerMediumTests {
 
   @TempDir
   Path temp;
@@ -105,7 +111,7 @@ abstract class AbstractLanguageServerMediumTests {
   private static ByteArrayOutputStream serverStdErr;
 
   @BeforeAll
-  public final static void startServer() throws Exception {
+  public static void startServer() throws Exception {
     System.setProperty(SonarLintTelemetry.DISABLE_PROPERTY_KEY, "true");
     serverSocket = new ServerSocket(0);
     int port = serverSocket.getLocalPort();
@@ -154,12 +160,17 @@ abstract class AbstractLanguageServerMediumTests {
     initializeParams.setTrace("messages");
     initializeParams.setInitializationOptions(initializeOptions);
     initializeParams.setWorkspaceFolders(asList(initFolders));
-    lsProxy.initialize(initializeParams).get();
+    initializeParams.setClientInfo(new ClientInfo("SonarLint LS Medium tests", "1.0"));
+    initializeParams.setCapabilities(new ClientCapabilities());
+    initializeParams.getCapabilities().setWindow(new WindowClientCapabilities());
+    InitializeResult initializeResult = lsProxy.initialize(initializeParams).get();
+    assertThat(initializeResult.getServerInfo().getName()).isEqualTo("SonarLint Language Server");
+    assertThat(initializeResult.getServerInfo().getVersion()).isNotBlank();
     lsProxy.initialized(new InitializedParams());
   }
 
   @AfterAll
-  public final static void stopServer() throws Exception {
+  public static void stopServer() throws Exception {
     System.clearProperty(SonarLintTelemetry.DISABLE_PROPERTY_KEY);
     try {
       if (lsProxy != null) {
@@ -264,7 +275,7 @@ abstract class AbstractLanguageServerMediumTests {
 
     @Override
     public CompletableFuture<MessageActionItem> showMessageRequest(ShowMessageRequestParams requestParams) {
-      return null;
+      return CompletableFuture.completedFuture(null);
     }
 
     @Override
@@ -280,20 +291,39 @@ abstract class AbstractLanguageServerMediumTests {
     @Override
     public CompletableFuture<List<Object>> configuration(ConfigurationParams configurationParams) {
       return CompletableFutures.computeAsync(cancelToken -> {
-        assertThat(configurationParams.getItems()).extracting(ConfigurationItem::getSection).containsExactly("sonarlint");
-        List<Object> result = new ArrayList<>(configurationParams.getItems().size());
-        for (ConfigurationItem item : configurationParams.getItems()) {
-          if (item.getScopeUri() == null) {
-            result.add(globalSettings);
-          } else {
-            result
-              .add(Optional.ofNullable(folderSettings.get(item.getScopeUri()))
-                .orElseThrow(() -> new IllegalStateException("No settings mocked for workspaceFolderPath " + item.getScopeUri())));
+        List<Object> result;
+        try {
+          assertThat(configurationParams.getItems()).extracting(ConfigurationItem::getSection).containsExactly("sonarlint");
+          result = new ArrayList<>(configurationParams.getItems().size());
+          for (ConfigurationItem item : configurationParams.getItems()) {
+            if (item.getScopeUri() == null) {
+              result.add(globalSettings);
+            } else {
+              result
+                .add(Optional.ofNullable(folderSettings.get(item.getScopeUri()))
+                  .orElseThrow(() -> new IllegalStateException("No settings mocked for workspaceFolderPath " + item.getScopeUri())));
+            }
           }
+        } finally {
+          settingsLatch.countDown();
         }
-        settingsLatch.countDown();
         return result;
       });
+    }
+
+    @Override
+    public CompletableFuture<Void> showSonarLintOutput() {
+      return CompletableFutures.computeAsync(null);
+    }
+
+    @Override
+    public CompletableFuture<Void> openJavaHomeSettings() {
+      return CompletableFutures.computeAsync(null);
+    }
+
+    @Override
+    public CompletableFuture<Void> openPathToNodeSettings() {
+      return CompletableFutures.computeAsync(null);
     }
 
     @Override
@@ -305,12 +335,32 @@ abstract class AbstractLanguageServerMediumTests {
       });
     }
 
+    @Override
+    public CompletableFuture<Void> showHotspot(ServerHotspot h) {
+      return CompletableFutures.computeAsync(null);
+    }
+
+    @Override
+    public CompletableFuture<Void> showTaintVulnerability(ShowAllLocationsCommand.Param params) {
+      return CompletableFutures.computeAsync(null);
+    }
+
+    @Override
     public CompletableFuture<GetJavaConfigResponse> getJavaConfig(String fileUri) {
       return CompletableFutures.computeAsync(cancelToken -> {
         return javaConfigs.get(fileUri);
       });
     }
 
+    @Override
+    public CompletableFuture<Void> browseTo(String link) {
+      return CompletableFutures.computeAsync(null);
+    }
+
+    @Override
+    public CompletableFuture<Void> openConnectionSettings(boolean isSonarCloud) {
+      return CompletableFutures.computeAsync(null);
+    }
   }
 
   protected void emulateConfigurationChangeOnClient(@Nullable String testFilePattern, @Nullable Boolean disableTelemetry, String... ruleConfigs) {
@@ -357,7 +407,7 @@ abstract class AbstractLanguageServerMediumTests {
   }
 
   private static Map<String, Object> buildRulesMap(String... ruleConfigs) {
-    assertThat(ruleConfigs.length % 2).withFailMessage("ruleConfigs must contain 'rule:key', 'level' pairs").isEqualTo(0);
+    assertThat(ruleConfigs.length % 2).withFailMessage("ruleConfigs must contain 'rule:key', 'level' pairs").isZero();
     ImmutableMap.Builder<String, Object> rules = ImmutableMap.builder();
     for (int i = 0; i < ruleConfigs.length; i += 2) {
       rules.put(ruleConfigs[i], ImmutableMap.of("level", ruleConfigs[i + 1]));
@@ -371,11 +421,7 @@ abstract class AbstractLanguageServerMediumTests {
     lsProxy.getTextDocumentService()
       .didChange(new DidChangeTextDocumentParams(docId, singletonList(new TextDocumentContentChangeEvent(content))));
     toBeClosed.add(uri);
-    if (client.diagnosticsLatch.await(1, TimeUnit.MINUTES)) {
-      return client.getDiagnostics(uri);
-    } else {
-      throw new AssertionError("No diagnostics received after 1 minute");
-    }
+    return awaitDiagnosticsForOneMinute(uri);
   }
 
   protected List<Diagnostic> didOpenAndWaitForDiagnostics(String uri, String languageId, String content) throws InterruptedException {
@@ -383,11 +429,7 @@ abstract class AbstractLanguageServerMediumTests {
     lsProxy.getTextDocumentService()
       .didOpen(new DidOpenTextDocumentParams(new TextDocumentItem(uri, languageId, 1, content)));
     toBeClosed.add(uri);
-    if (client.diagnosticsLatch.await(1, TimeUnit.MINUTES)) {
-      return client.getDiagnostics(uri);
-    } else {
-      throw new AssertionError("No diagnostics received after 1 minute");
-    }
+    return awaitDiagnosticsForOneMinute(uri);
   }
 
   protected List<Diagnostic> didSaveAndWaitForDiagnostics(String uri, String content) throws InterruptedException {
@@ -395,6 +437,10 @@ abstract class AbstractLanguageServerMediumTests {
     client.diagnosticsLatch = new CountDownLatch(1);
     lsProxy.getTextDocumentService()
       .didSave(new DidSaveTextDocumentParams(docId, content));
+    return awaitDiagnosticsForOneMinute(uri);
+  }
+
+  private List<Diagnostic> awaitDiagnosticsForOneMinute(String uri) throws InterruptedException {
     if (client.diagnosticsLatch.await(1, TimeUnit.MINUTES)) {
       return client.getDiagnostics(uri);
     } else {

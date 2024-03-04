@@ -1,6 +1,6 @@
 /*
  * SonarLint Language Server
- * Copyright (C) 2009-2020 SonarSource SA
+ * Copyright (C) 2009-2021 SonarSource SA
  * mailto:info AT sonarsource DOT com
  *
  * This program is free software; you can redistribute it and/or
@@ -41,12 +41,15 @@ import org.eclipse.lsp4j.DiagnosticSeverity;
 import org.eclipse.lsp4j.DidChangeTextDocumentParams;
 import org.eclipse.lsp4j.DidChangeWorkspaceFoldersParams;
 import org.eclipse.lsp4j.DidCloseTextDocumentParams;
+import org.eclipse.lsp4j.DidOpenTextDocumentParams;
+import org.eclipse.lsp4j.DidSaveTextDocumentParams;
 import org.eclipse.lsp4j.ExecuteCommandParams;
 import org.eclipse.lsp4j.MessageParams;
 import org.eclipse.lsp4j.Position;
 import org.eclipse.lsp4j.Range;
 import org.eclipse.lsp4j.TextDocumentContentChangeEvent;
 import org.eclipse.lsp4j.TextDocumentIdentifier;
+import org.eclipse.lsp4j.TextDocumentItem;
 import org.eclipse.lsp4j.VersionedTextDocumentIdentifier;
 import org.eclipse.lsp4j.WorkspaceFolder;
 import org.eclipse.lsp4j.WorkspaceFoldersChangeEvent;
@@ -58,6 +61,7 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.sonarsource.sonarlint.ls.Rule;
 import org.sonarsource.sonarlint.ls.SonarLintExtendedLanguageClient;
+import org.sonarsource.sonarlint.ls.commands.ShowAllLocationsCommand;
 
 import static java.util.Arrays.asList;
 import static java.util.Collections.singletonList;
@@ -124,7 +128,7 @@ class LanguageServerMediumTests extends AbstractLanguageServerMediumTests {
       "javascript:S1105", "on");
 
     assertLogContains(
-      "Global settings updated: WorkspaceSettings[disableTelemetry=false,servers={},excludedRules=[javascript:S1481],includedRules=[javascript:S1105],ruleParameters={},showAnalyzerLogs=false,showVerboseLogs=false]");
+      "Global settings updated: WorkspaceSettings[disableTelemetry=false,connections={},excludedRules=[javascript:S1481],includedRules=[javascript:S1105],ruleParameters={},showAnalyzerLogs=false,showVerboseLogs=false,pathToNodeExecutable=<null>]");
 
     assertTrue(client.diagnosticsLatch.await(1, TimeUnit.MINUTES));
 
@@ -132,7 +136,7 @@ class LanguageServerMediumTests extends AbstractLanguageServerMediumTests {
       .extracting(startLine(), startCharacter(), endLine(), endCharacter(), code(), Diagnostic::getSource, Diagnostic::getMessage, Diagnostic::getSeverity)
       .containsExactlyInAnyOrder(
         tuple(1, 1, 1, 2, "javascript:S1105", "sonarlint", "Opening curly brace does not appear on the same line as controlling statement.", DiagnosticSeverity.Information)
-        // Expected issues on javascript:S1481 are suppressed by rule configuration
+      // Expected issues on javascript:S1481 are suppressed by rule configuration
       );
   }
 
@@ -146,7 +150,7 @@ class LanguageServerMediumTests extends AbstractLanguageServerMediumTests {
 
     assertThat(diagnostics)
       .extracting(startLine(), startCharacter(), endLine(), endCharacter(), code(), Diagnostic::getSource, Diagnostic::getMessage, Diagnostic::getSeverity)
-      .containsExactly(tuple(1, 13, 1, 18, "typescript:S1764", "sonarlint", "Correct one of the identical sub-expressions on both sides of operator \"&&\"",
+      .containsExactly(tuple(1, 13, 1, 18, "typescript:S1764", "sonarlint", "Correct one of the identical sub-expressions on both sides of operator \"&&\" [+1 location]",
         DiagnosticSeverity.Warning));
   }
 
@@ -163,6 +167,26 @@ class LanguageServerMediumTests extends AbstractLanguageServerMediumTests {
   }
 
   @Test
+  void analyzePythonFileWithDuplicatedStringOnOpen() throws Exception {
+    String uri = getUri("analyzePythonFileWithDuplicatedStringOnOpen.py");
+
+    List<Diagnostic> diagnostics = didOpenAndWaitForDiagnostics(uri, "python", "def foo():\n  print('/toto')\n  print('/toto')\n  print('/toto')\n");
+
+    assertThat(diagnostics)
+      .extracting(startLine(), startCharacter(), endLine(), endCharacter(), code(), Diagnostic::getSource, Diagnostic::getMessage, Diagnostic::getSeverity)
+      .containsExactly(
+        tuple(1, 8, 1, 15, "python:S1192", "sonarlint", "Define a constant instead of duplicating this literal '/toto' 3 times. [+2 locations]", DiagnosticSeverity.Warning));
+
+    Diagnostic d = diagnostics.get(0);
+    CodeActionParams codeActionParams = new CodeActionParams(new TextDocumentIdentifier(uri), d.getRange(), new CodeActionContext(singletonList(d)));
+    List<Either<Command, CodeAction>> list = lsProxy.getTextDocumentService().codeAction(codeActionParams).get();
+    assertThat(list).hasSize(3);
+    CodeAction allLocationsAction = list.get(1).getRight();
+    assertThat(allLocationsAction.getCommand().getCommand()).isEqualTo(ShowAllLocationsCommand.ID);
+    assertThat(allLocationsAction.getCommand().getArguments()).hasSize(1);
+  }
+
+  @Test
   void analyzeSimplePhpFileOnOpen() throws Exception {
     String uri = getUri("foo.php");
 
@@ -170,7 +194,7 @@ class LanguageServerMediumTests extends AbstractLanguageServerMediumTests {
 
     assertThat(diagnostics)
       .extracting(startLine(), startCharacter(), endLine(), endCharacter(), code(), Diagnostic::getSource, Diagnostic::getMessage, Diagnostic::getSeverity)
-      .containsExactly(tuple(2, 2, 2, 6, "php:S2041", "sonarlint", "Remove the parentheses from this \"echo\" call.", DiagnosticSeverity.Error));
+      .containsExactly(tuple(2, 2, 2, 6, "php:S2041", "sonarlint", "Remove the parentheses from this \"echo\" call.", DiagnosticSeverity.Warning));
   }
 
   @Test
@@ -277,24 +301,6 @@ class LanguageServerMediumTests extends AbstractLanguageServerMediumTests {
   }
 
   @Test
-  void diagnosticRelatedInfos() throws Exception {
-    String uri = getUri("foo.js");
-
-    List<Diagnostic> diagnostics = didOpenAndWaitForDiagnostics(uri, "javascript", "function foo(a, b) {  print(a + \" \" + b);\n" +
-      "}\n" +
-      "foo(\"a\", \"b\", \"c\");\n");
-
-    assertThat(diagnostics)
-      .extracting(startLine(), startCharacter(), endLine(), endCharacter(), code(), Diagnostic::getSource, Diagnostic::getMessage, Diagnostic::getSeverity)
-      .containsExactly(
-        tuple(2, 0, 2, 18, "javascript:S930", "sonarlint", "This function expects 2 arguments, but 3 were provided.", DiagnosticSeverity.Error));
-
-    assertThat(diagnostics.get(0).getRelatedInformation())
-      .extracting("location.range.start.line", "location.range.start.character", "location.range.end.line", "location.range.end.character", "location.uri", "message")
-      .containsExactly(tuple(0, 13, 0, 17, uri, "Formal parameters"));
-  }
-
-  @Test
   void cleanDiagnosticsOnClose() throws Exception {
     String uri = getUri("foo.js");
     client.diagnosticsLatch = new CountDownLatch(1);
@@ -302,6 +308,34 @@ class LanguageServerMediumTests extends AbstractLanguageServerMediumTests {
       .didClose(new DidCloseTextDocumentParams(new TextDocumentIdentifier(uri)));
     assertTrue(client.diagnosticsLatch.await(1, TimeUnit.MINUTES));
 
+    assertThat(client.getDiagnostics(uri)).isEmpty();
+  }
+
+  @Test
+  void noAnalysisOnNullContent() throws Exception {
+    emulateConfigurationChangeOnClient("**/*Test.js", true, true, true);
+    Thread.sleep(1000);
+    client.logs.clear();
+
+    String uri = getUri("foo.py");
+    client.diagnosticsLatch = new CountDownLatch(1);
+    VersionedTextDocumentIdentifier docId = new VersionedTextDocumentIdentifier(uri, 1);
+
+    // SLVSCODE-157 - Open/Close/Open/Close triggers a race condition that nullifies content
+    lsProxy.getTextDocumentService()
+      .didOpen(new DidOpenTextDocumentParams(new TextDocumentItem(uri, "python", 1, "# Nothing to see here\n")));
+    lsProxy.getTextDocumentService()
+      .didClose(new DidCloseTextDocumentParams(docId));
+    lsProxy.getTextDocumentService()
+      .didOpen(new DidOpenTextDocumentParams(new TextDocumentItem(uri, "python", 1, "# Nothing to see here\n")));
+    lsProxy.getTextDocumentService()
+      .didClose(new DidCloseTextDocumentParams(docId));
+
+    await().atMost(1, TimeUnit.MINUTES).untilAsserted(
+      () -> assertThat(client.logs).extracting(withoutTimestamp()).contains(
+        "[Debug] Skipping analysis of file '" + uri + "', content has disappeared"
+      )
+    );
     assertThat(client.getDiagnostics(uri)).isEmpty();
   }
 
@@ -317,7 +351,7 @@ class LanguageServerMediumTests extends AbstractLanguageServerMediumTests {
     emulateConfigurationChangeOnClient(null, false, false, true);
 
     assertLogContains(
-      "Global settings updated: WorkspaceSettings[disableTelemetry=false,servers={},excludedRules=[],includedRules=[],ruleParameters={},showAnalyzerLogs=false,showVerboseLogs=true]");
+      "Global settings updated: WorkspaceSettings[disableTelemetry=false,connections={},excludedRules=[],includedRules=[],ruleParameters={},showAnalyzerLogs=false,showVerboseLogs=true,pathToNodeExecutable=<null>]");
     // We are using the global system property to disable telemetry in tests, so this assertion do not pass
     // assertLogContainsInOrder( "Telemetry enabled");
   }
@@ -373,7 +407,8 @@ class LanguageServerMediumTests extends AbstractLanguageServerMediumTests {
     assertThat(client.ruleDesc.getType()).isEqualTo("CODE_SMELL");
     assertThat(client.ruleDesc.getSeverity()).isEqualTo("MAJOR");
     assertThat(client.ruleDesc.getParameters()).hasSize(1)
-      .extracting(SonarLintExtendedLanguageClient.RuleParameter::getName, SonarLintExtendedLanguageClient.RuleParameter::getDescription, SonarLintExtendedLanguageClient.RuleParameter::getDefaultValue)
+      .extracting(SonarLintExtendedLanguageClient.RuleParameter::getName, SonarLintExtendedLanguageClient.RuleParameter::getDescription,
+        SonarLintExtendedLanguageClient.RuleParameter::getDefaultValue)
       .containsExactly(tuple("maximumLineLength", "The maximum authorized line length.", "180"));
   }
 
@@ -396,6 +431,7 @@ class LanguageServerMediumTests extends AbstractLanguageServerMediumTests {
     Diagnostic d = new Diagnostic(range, "An issue");
     d.setSource("sonarlint");
     d.setCode("javascript:S930");
+    d.setData("uuid");
     CodeActionParams codeActionParams = new CodeActionParams(new TextDocumentIdentifier("file://foo.js"), range, new CodeActionContext(singletonList(d)));
     List<Either<Command, CodeAction>> list = lsProxy.getTextDocumentService().codeAction(codeActionParams).get();
     assertThat(list).hasSize(2);
@@ -447,7 +483,7 @@ class LanguageServerMediumTests extends AbstractLanguageServerMediumTests {
   @Test
   void fetchWorkspaceFolderConfigurationWhenAdded() throws Exception {
     client.settingsLatch = new CountDownLatch(1);
-    String folderUri = "some://added_uri";
+    String folderUri = "file:///added_uri";
     client.folderSettings.put(folderUri, buildSonarLintSettingsSection("another pattern", null, null, true));
 
     try {
@@ -457,7 +493,7 @@ class LanguageServerMediumTests extends AbstractLanguageServerMediumTests {
       awaitLatch(client.settingsLatch);
 
       assertLogContains(
-        "Workspace folder 'WorkspaceFolder[uri=some://added_uri,name=Added]' configuration updated: WorkspaceFolderSettings[analyzerProperties={},testFilePattern=another pattern,connectionId=<null>,projectKey=<null>]");
+        "Workspace folder 'WorkspaceFolder[uri=file:///added_uri,name=Added]' configuration updated: WorkspaceFolderSettings[analyzerProperties={},testFilePattern=another pattern,connectionId=<null>,projectKey=<null>]");
     } finally {
       lsProxy.getWorkspaceService()
         .didChangeWorkspaceFolders(
@@ -480,7 +516,7 @@ class LanguageServerMediumTests extends AbstractLanguageServerMediumTests {
       .extracting(withoutTimestamp())
       .containsExactly(
         "[Info] Analyzing file '" + uri + "'...",
-        "[Info] Found 1 issue(s)"));
+        "[Info] Found 1 issue"));
   }
 
   @Test
@@ -498,7 +534,7 @@ class LanguageServerMediumTests extends AbstractLanguageServerMediumTests {
       .containsSubsequence(
         "[Debug] Queuing analysis of file '" + uri + "'",
         "[Info] Analyzing file '" + uri + "'...",
-        "[Info] Found 1 issue(s)"));
+        "[Info] Found 1 issue"));
   }
 
   @Test
@@ -518,7 +554,7 @@ class LanguageServerMediumTests extends AbstractLanguageServerMediumTests {
         "[Info] Index files",
         "[Info] 1 file indexed",
         "[Info] 1 source files to be analyzed",
-        "[Info] Found 1 issue(s)"));
+        "[Info] Found 1 issue"));
   }
 
   @Test
@@ -536,10 +572,10 @@ class LanguageServerMediumTests extends AbstractLanguageServerMediumTests {
       .contains(
         "[Info] Analyzing file '" + uri + "'...",
         "[Info] Index files",
-        "[Debug] Language of file '" + uri + "' is set to 'js'",
+        "[Debug] Language of file '" + uri + "' is set to 'JavaScript'",
         "[Info] 1 file indexed",
         "[Debug] Execute Sensor: JavaScript analysis",
-        "[Info] Found 1 issue(s)"));
+        "[Info] Found 1 issue"));
   }
 
   private Predicate<? super MessageParams> notFromContextualTSserver() {

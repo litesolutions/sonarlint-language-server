@@ -1,6 +1,6 @@
 /*
  * SonarLint Language Server
- * Copyright (C) 2009-2020 SonarSource SA
+ * Copyright (C) 2009-2021 SonarSource SA
  * mailto:info AT sonarsource DOT com
  *
  * This program is free software; you can redistribute it and/or
@@ -21,6 +21,7 @@ package org.sonarsource.sonarlint.ls.connected;
 
 import java.util.List;
 import javax.annotation.CheckForNull;
+import org.sonarsource.sonarlint.core.client.api.common.TextRange;
 import org.sonarsource.sonarlint.core.client.api.common.analysis.ClientInputFile;
 import org.sonarsource.sonarlint.core.client.api.common.analysis.Issue;
 
@@ -93,4 +94,9 @@ public class DelegatingIssue implements Issue {
     return issue.getInputFile();
   }
 
+  @CheckForNull
+  @Override
+  public TextRange getTextRange() {
+    return issue.getTextRange();
+  }
 }

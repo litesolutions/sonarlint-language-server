@@ -1,6 +1,6 @@
 /*
  * SonarLint Language Server
- * Copyright (C) 2009-2020 SonarSource SA
+ * Copyright (C) 2009-2023 SonarSource SA
  * mailto:info AT sonarsource DOT com
  *
  * This program is free software; you can redistribute it and/or
@@ -20,85 +20,108 @@
 package org.sonarsource.sonarlint.ls.folders;
 
 import java.net.URI;
-import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.util.Arrays;
 import java.util.Collections;
+import java.util.List;
 import java.util.Optional;
 import org.eclipse.lsp4j.WorkspaceFolder;
 import org.eclipse.lsp4j.WorkspaceFoldersChangeEvent;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledOnOs;
 import org.junit.jupiter.api.condition.OS;
 import org.junit.jupiter.api.extension.RegisterExtension;
-import org.sonar.api.utils.log.LogTesterJUnit5;
+import org.sonarsource.sonarlint.core.clientapi.backend.config.binding.BindingConfigurationDto;
+import org.sonarsource.sonarlint.core.clientapi.backend.config.scope.ConfigurationScopeDto;
+import org.sonarsource.sonarlint.ls.backend.BackendService;
+import org.sonarsource.sonarlint.ls.backend.BackendServiceFacade;
+import org.sonarsource.sonarlint.ls.connected.ProjectBindingManager;
+import org.sonarsource.sonarlint.ls.connected.ProjectBindingWrapper;
+import testutils.ImmediateExecutorService;
+import testutils.SonarLintLogTester;
 
 import static java.net.URI.create;
-import static java.util.Arrays.asList;
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.junit.jupiter.api.Assertions.fail;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 import static org.sonarsource.sonarlint.ls.folders.WorkspaceFoldersManager.isAncestor;
 
 class WorkspaceFoldersManagerTests {
 
   @RegisterExtension
-  public LogTesterJUnit5 logTester = new LogTesterJUnit5();
+  SonarLintLogTester logTester = new SonarLintLogTester();
+  ProjectBindingManager bindingManager;
+  BackendServiceFacade backendServiceFacade = mock(BackendServiceFacade.class);
+  BackendService backendService = mock(BackendService.class);
 
-  private WorkspaceFoldersManager underTest = new WorkspaceFoldersManager();
+  private final WorkspaceFoldersManager underTest = new WorkspaceFoldersManager(new ImmediateExecutorService(), backendServiceFacade);
+
+  @BeforeEach
+  void prepare() {
+    bindingManager = mock(ProjectBindingManager.class);
+    when(bindingManager.getBinding(URI.create(""))).thenReturn(Optional.of(mock(ProjectBindingWrapper.class)));
+    when(backendServiceFacade.getBackendService()).thenReturn(backendService);
+    when(backendService.getConfigScopeDto(any(), any()))
+      .thenReturn(new ConfigurationScopeDto("id", BackendServiceFacade.ROOT_CONFIGURATION_SCOPE, true, "name",
+        new BindingConfigurationDto("connectionId", "projectKey", true)));
+    underTest.setBindingManager(bindingManager);
+  }
 
   @Test
-  public void findFolderForFile_returns_correct_folder_when_exists() {
-    Path basedir = Paths.get("path/to/base").toAbsolutePath();
-    Path file = basedir.resolve("some/sub/file.java");
+  void findFolderForFile_returns_correct_folder_when_exists() {
+    var basedir = Paths.get("path/to/base").toAbsolutePath();
+    var file = basedir.resolve("some/sub/file.java");
 
-    WorkspaceFolder workspaceFolder = mockWorkspaceFolder(basedir.toUri());
-    underTest.initialize(asList(
+    var workspaceFolder = mockWorkspaceFolder(basedir.toUri());
+    underTest.initialize(List.of(
       mockWorkspaceFolder(Paths.get("other/path").toAbsolutePath().toUri()),
       workspaceFolder,
       mockWorkspaceFolder(Paths.get("other/path2").toAbsolutePath().toUri())));
 
-    Optional<WorkspaceFolderWrapper> findFolderForFile = underTest.findFolderForFile(file.toUri());
-    assertThat(findFolderForFile).isPresent();
-    assertThat(findFolderForFile.get().getRootPath()).isEqualTo(basedir);
+    var findFolderForFile = underTest.findFolderForFile(file.toUri());
+    assertThat(findFolderForFile).isPresent()
+      .get().extracting(WorkspaceFolderWrapper::getRootPath).isEqualTo(basedir);
   }
 
   @Test
-  public void findFolderForFile_returns_empty_when_no_folder_matched() {
-    Path basedir = Paths.get("path/to/base").toAbsolutePath();
-    Path file = basedir.resolve("some/sub/file.java");
-    Path workspaceRoot = Paths.get("other/path");
+  void findFolderForFile_returns_empty_when_no_folder_matched() {
+    var basedir = Paths.get("path/to/base").toAbsolutePath();
+    var file = basedir.resolve("some/sub/file.java");
+    var workspaceRoot = Paths.get("other/path");
 
-    WorkspaceFolder workspaceFolder = mockWorkspaceFolder(workspaceRoot.toUri());
-    underTest.initialize(Arrays.asList(workspaceFolder,
+    var workspaceFolder = mockWorkspaceFolder(workspaceRoot.toUri());
+    underTest.initialize(List.of(workspaceFolder,
       mockWorkspaceFolder(Paths.get("other/path2").toAbsolutePath().toUri())));
 
     assertThat(underTest.findFolderForFile(file.toUri())).isEmpty();
   }
 
   @Test
-  public void findBaseDir_finds_deepest_nested_folder() {
-    Path basedir = Paths.get("path/to/base").toAbsolutePath();
-    Path subFolder = basedir.resolve("sub");
-    URI file = subFolder.resolve("file.java").toUri();
+  void findBaseDir_finds_deepest_nested_folder() {
+    var basedir = Paths.get("path/to/base").toAbsolutePath();
+    var subFolder = basedir.resolve("sub");
+    var file = subFolder.resolve("file.java").toUri();
 
-    underTest.initialize(asList(
+    underTest.initialize(List.of(
       mockWorkspaceFolder(subFolder.toUri()),
       mockWorkspaceFolder(basedir.toUri())));
 
-    Optional<WorkspaceFolderWrapper> findFolderForFile = underTest.findFolderForFile(file);
-    assertThat(findFolderForFile).isPresent();
-    assertThat(findFolderForFile.get().getRootPath()).isEqualTo(subFolder);
+    var findFolderForFile = underTest.findFolderForFile(file);
+    assertThat(findFolderForFile).isPresent()
+      .get().extracting(WorkspaceFolderWrapper::getRootPath).isEqualTo(subFolder);
   }
 
   @Test
-  public void initialize_does_not_crash_when_no_folders() {
+  void initialize_does_not_crash_when_no_folders() {
     underTest.initialize(null);
 
     assertThat(underTest.getAll()).isEmpty();
   }
 
   @Test
-  public void testURIAncestor() {
+  void testURIAncestor() {
     assertThat(isAncestor(create("file:///foo"), create("file:///foo"))).isTrue();
     assertThat(isAncestor(create("file:///foo"), create("file:///foo/bar.txt"))).isTrue();
     assertThat(isAncestor(create("file:///foo/bar"), create("file:///foo/bar.txt"))).isFalse();
@@ -122,71 +145,63 @@ class WorkspaceFoldersManagerTests {
     // Not the same port
     assertThat(isAncestor(create("file://laptop:8080/My%20Documents"), create("file://laptop:8081/My%20Documents/FileSchemeURIs.doc"))).isFalse();
     // Opaque
-    try {
-      isAncestor(create("mailto:a@b.com"), create("file:///foo"));
-      fail("Exception expected");
-    } catch (Exception e) {
-      assertThat(e).isInstanceOf(IllegalArgumentException.class);
-    }
-    try {
-      isAncestor(create("file:///foo"), create("mailto:a@b.com"));
-      fail("Exception expected");
-    } catch (Exception e) {
-      assertThat(e).isInstanceOf(IllegalArgumentException.class);
-    }
+    URI emailUri = create("mailto:a@b.com");
+    URI fileUri = create("file:///foo");
+    assertThrows(IllegalArgumentException.class, () -> isAncestor(emailUri, fileUri));
+    assertThrows(IllegalArgumentException.class, () -> isAncestor(fileUri, emailUri));
   }
 
   @Test
   @EnabledOnOs(OS.WINDOWS)
-  // Fail on Linux with IllegalArgumentException: URI has an authority component
-  public void testURIAncestor_UNC_path() {
+    // Fail on Linux with IllegalArgumentException: URI has an authority component
+  void testURIAncestor_UNC_path() {
     assertThat(isAncestor(create("file://laptop/My%20Documents"), create("file://laptop/My%20Documents/FileSchemeURIs.doc"))).isTrue();
   }
 
   @Test
-  public void register_new_folder() {
+  void register_new_folder() {
     underTest.initialize(Collections.emptyList());
     assertThat(underTest.getAll()).isEmpty();
 
-    Path basedir = Paths.get("path/to/base").toAbsolutePath();
-    WorkspaceFolder workspaceFolder = mockWorkspaceFolder(basedir.toUri());
+    var basedir = Paths.get("path/to/base").toAbsolutePath();
+    var workspaceFolder = mockWorkspaceFolder(basedir.toUri());
 
-    underTest.didChangeWorkspaceFolders(new WorkspaceFoldersChangeEvent(asList(workspaceFolder), Collections.emptyList()));
+    underTest.didChangeWorkspaceFolders(new WorkspaceFoldersChangeEvent(List.of(workspaceFolder), Collections.emptyList()));
 
     assertThat(underTest.getAll()).extracting(WorkspaceFolderWrapper::getRootPath).containsExactly(basedir);
     assertThat(logTester.logs()).containsExactly("Processing didChangeWorkspaceFolders event",
-      "Folder WorkspaceFolder[uri=" + basedir.toUri() + ",name=<null>] added");
+      "Folder WorkspaceFolder[name=<null>,uri=" + basedir.toUri() + "] added");
 
     logTester.clear();
 
     // Should never occurs
-    underTest.didChangeWorkspaceFolders(new WorkspaceFoldersChangeEvent(asList(workspaceFolder), Collections.emptyList()));
+    underTest.didChangeWorkspaceFolders(new WorkspaceFoldersChangeEvent(List.of(workspaceFolder), Collections.emptyList()));
 
     assertThat(underTest.getAll()).extracting(WorkspaceFolderWrapper::getRootPath).containsExactly(basedir);
     assertThat(logTester.logs()).containsExactly("Processing didChangeWorkspaceFolders event",
-      "Registered workspace folder WorkspaceFolder[uri=" + basedir.toUri() + ",name=<null>] was already added");
+      "Registered workspace folder WorkspaceFolder[name=<null>,uri=" + basedir.toUri() + "] was already added");
   }
 
   @Test
-  public void unregister_folder() {
-    Path basedir = Paths.get("path/to/base").toAbsolutePath();
-    WorkspaceFolder workspaceFolder = mockWorkspaceFolder(basedir.toUri());
+  void unregister_folder() {
+    var basedir = Paths.get("path/to/base").toAbsolutePath();
+    var workspaceFolder = mockWorkspaceFolder(basedir.toUri());
 
-    underTest.initialize(asList(workspaceFolder));
+    underTest.initialize(List.of(workspaceFolder));
     assertThat(underTest.getAll()).extracting(WorkspaceFolderWrapper::getRootPath).containsExactly(basedir);
 
     logTester.clear();
 
-    underTest.didChangeWorkspaceFolders(new WorkspaceFoldersChangeEvent(Collections.emptyList(), asList(workspaceFolder)));
+    underTest.didChangeWorkspaceFolders(new WorkspaceFoldersChangeEvent(Collections.emptyList(), List.of(workspaceFolder)));
 
     assertThat(underTest.getAll()).isEmpty();
     assertThat(logTester.logs()).containsExactly("Processing didChangeWorkspaceFolders event",
-      "Folder WorkspaceFolder[uri=" + basedir.toUri() + ",name=<null>] removed");
+      "Folder WorkspaceFolder[name=<null>,uri=" + basedir.toUri() + "] removed");
 
     logTester.clear();
 
-    // Should never occurs
-    underTest.didChangeWorkspaceFolders(new WorkspaceFoldersChangeEvent(Collections.emptyList(), asList(workspaceFolder)));
+    // Should never occur
+    underTest.didChangeWorkspaceFolders(new WorkspaceFoldersChangeEvent(Collections.emptyList(), List.of(workspaceFolder)));
 
     assertThat(underTest.getAll()).isEmpty();
     assertThat(logTester.logs()).containsExactly("Processing didChangeWorkspaceFolders event",

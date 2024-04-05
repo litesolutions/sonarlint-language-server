@@ -1,6 +1,6 @@
 /*
  * SonarLint Language Server
- * Copyright (C) 2009-2020 SonarSource SA
+ * Copyright (C) 2009-2023 SonarSource SA
  * mailto:info AT sonarsource DOT com
  *
  * This program is free software; you can redistribute it and/or
@@ -22,19 +22,19 @@ package org.sonarsource.sonarlint.ls.folders;
 import java.net.URI;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.Objects;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import javax.annotation.CheckForNull;
-import org.apache.commons.lang.builder.ToStringBuilder;
-import org.apache.commons.lang.builder.ToStringStyle;
+import org.apache.commons.lang3.builder.ToStringBuilder;
+import org.apache.commons.lang3.builder.ToStringStyle;
 import org.eclipse.lsp4j.WorkspaceFolder;
-import org.sonar.api.utils.log.Logger;
-import org.sonar.api.utils.log.Loggers;
+import org.sonarsource.sonarlint.core.commons.log.SonarLintLogger;
 import org.sonarsource.sonarlint.ls.settings.WorkspaceFolderSettings;
 
 public class WorkspaceFolderWrapper {
 
-  private static final Logger LOG = Loggers.get(WorkspaceFolderWrapper.class);
+  private static final SonarLintLogger LOG = SonarLintLogger.get();
 
   private final URI uri;
   private final WorkspaceFolder lspFolder;
@@ -56,12 +56,29 @@ public class WorkspaceFolderWrapper {
   }
 
   @Override
+  public int hashCode() {
+    return Objects.hash(uri);
+  }
+
+  @Override
+  public boolean equals(Object obj) {
+    if (this == obj) {
+      return true;
+    }
+    if (!(obj instanceof WorkspaceFolderWrapper)) {
+      return false;
+    }
+    WorkspaceFolderWrapper other = (WorkspaceFolderWrapper) obj;
+    return Objects.equals(uri, other.uri);
+  }
+
+  @Override
   public String toString() {
     return ToStringBuilder.reflectionToString(lspFolder, ToStringStyle.SHORT_PREFIX_STYLE);
   }
 
   /**
-   * Get non null settings, waiting for them to be initialized 
+   * Get non null settings, waiting for them to be initialized
    */
   public WorkspaceFolderSettings getSettings() {
     try {

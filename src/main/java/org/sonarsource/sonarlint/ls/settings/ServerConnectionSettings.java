@@ -1,6 +1,6 @@
 /*
  * SonarLint Language Server
- * Copyright (C) 2009-2020 SonarSource SA
+ * Copyright (C) 2009-2023 SonarSource SA
  * mailto:info AT sonarsource DOT com
  *
  * This program is free software; you can redistribute it and/or
@@ -19,34 +19,59 @@
  */
 package org.sonarsource.sonarlint.ls.settings;
 
-import java.util.Arrays;
+import java.util.List;
 import java.util.Objects;
+import javax.annotation.CheckForNull;
 import javax.annotation.Nullable;
 import javax.annotation.concurrent.Immutable;
-import org.apache.commons.lang.builder.ToStringBuilder;
-import org.apache.commons.lang.builder.ToStringStyle;
+import org.apache.commons.lang3.builder.ReflectionToStringBuilder;
+import org.apache.commons.lang3.builder.ToStringStyle;
+import org.eclipse.lsp4j.jsonrpc.messages.Either;
+import org.sonarsource.sonarlint.core.clientapi.backend.connection.common.TransientSonarCloudConnectionDto;
+import org.sonarsource.sonarlint.core.clientapi.backend.connection.common.TransientSonarQubeConnectionDto;
+import org.sonarsource.sonarlint.core.clientapi.backend.connection.validate.ValidateConnectionParams;
+import org.sonarsource.sonarlint.core.clientapi.common.TokenDto;
+import org.sonarsource.sonarlint.core.serverapi.EndpointParams;
 
 @Immutable
 public class ServerConnectionSettings {
   static final String SONARCLOUD_URL = "https://sonarcloud.io";
   static final String[] SONARCLOUD_ALIAS = {"https://sonarqube.com", "https://www.sonarqube.com", "https://www.sonarcloud.io", SONARCLOUD_URL};
 
-  private final String serverId;
+  private final String connectionId;
   private final String serverUrl;
-  private final String token;
+  private String token;
+  private final boolean disableNotifications;
 
   @Nullable
   private final String organizationKey;
+  private final EndpointParams endpointParams;
+  private ValidateConnectionParams validateConnectionParams;
 
-  public ServerConnectionSettings(String serverId, String serverUrl, String token, @Nullable String organizationKey) {
-    this.serverId = serverId;
+  public ServerConnectionSettings(String connectionId, String serverUrl, String token, @Nullable String organizationKey,
+    boolean disableNotifications) {
+    this.connectionId = connectionId;
     this.serverUrl = serverUrl;
     this.token = token;
     this.organizationKey = organizationKey;
+    this.disableNotifications = disableNotifications;
+    this.endpointParams = createEndpointParams();
+    this.validateConnectionParams = createValidateConnectionParams();
   }
 
-  public String getServerId() {
-    return serverId;
+  private EndpointParams createEndpointParams() {
+    return new EndpointParams(getServerUrl(), isSonarCloudAlias(), getOrganizationKey());
+  }
+
+  private ValidateConnectionParams createValidateConnectionParams() {
+    Either<TransientSonarQubeConnectionDto, TransientSonarCloudConnectionDto> connectionDto = isSonarCloudAlias() ?
+      Either.forRight(new TransientSonarCloudConnectionDto(getOrganizationKey(), Either.forLeft(new TokenDto(getToken())))) :
+      Either.forLeft(new TransientSonarQubeConnectionDto(getServerUrl(), Either.forLeft(new TokenDto(getToken()))));
+    return new ValidateConnectionParams(connectionDto);
+  }
+
+  String getConnectionId() {
+    return connectionId;
   }
 
   public String getServerUrl() {
@@ -57,17 +82,39 @@ public class ServerConnectionSettings {
     return token;
   }
 
+  @CheckForNull
   public String getOrganizationKey() {
     return organizationKey;
   }
 
   public boolean isSonarCloudAlias() {
-    return Arrays.asList(SONARCLOUD_ALIAS).contains(serverUrl);
+    return isSonarCloudAlias(serverUrl);
+  }
+
+  public static boolean isSonarCloudAlias(String serverUrl) {
+    return List.of(SONARCLOUD_ALIAS).contains(serverUrl);
+  }
+
+  public boolean isSmartNotificationsDisabled() {
+    return disableNotifications;
+  }
+
+  public EndpointParams getEndpointParams() {
+    return endpointParams;
+  }
+
+  public ValidateConnectionParams getValidateConnectionParams() {
+    return validateConnectionParams;
+  }
+
+  public void setToken(String token) {
+    this.token = token;
+    this.validateConnectionParams = createValidateConnectionParams();
   }
 
   @Override
   public int hashCode() {
-    return Objects.hash(serverId, serverUrl, token, organizationKey);
+    return Objects.hash(connectionId, serverUrl, token, organizationKey, disableNotifications);
   }
 
   @Override
@@ -81,13 +128,13 @@ public class ServerConnectionSettings {
     if (getClass() != obj.getClass()) {
       return false;
     }
-    ServerConnectionSettings other = (ServerConnectionSettings) obj;
-    return Objects.equals(serverId, other.serverId) && Objects.equals(serverUrl, other.serverUrl) && Objects.equals(token, other.token)
-      && Objects.equals(organizationKey, other.organizationKey);
+    var other = (ServerConnectionSettings) obj;
+    return Objects.equals(connectionId, other.connectionId) && Objects.equals(serverUrl, other.serverUrl) && Objects.equals(token, other.token)
+      && Objects.equals(organizationKey, other.organizationKey) && this.disableNotifications == other.disableNotifications;
   }
 
   @Override
   public String toString() {
-    return ToStringBuilder.reflectionToString(this, ToStringStyle.SHORT_PREFIX_STYLE);
+    return new ReflectionToStringBuilder(this, ToStringStyle.SHORT_PREFIX_STYLE).setExcludeFieldNames("endpointParams", "validateConnectionParams").toString();
   }
 }

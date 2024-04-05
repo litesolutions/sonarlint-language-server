@@ -1,6 +1,6 @@
 /*
  * SonarLint Language Server
- * Copyright (C) 2009-2020 SonarSource SA
+ * Copyright (C) 2009-2023 SonarSource SA
  * mailto:info AT sonarsource DOT com
  *
  * This program is free software; you can redistribute it and/or
@@ -19,70 +19,84 @@
  */
 package org.sonarsource.sonarlint.ls;
 
-import java.io.IOException;
-import java.io.PrintStream;
-import java.net.MalformedURLException;
-import java.net.URL;
+import com.google.common.collect.ImmutableList;
+import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.Collection;
+import java.util.List;
+import java.util.Optional;
+import java.util.concurrent.Callable;
+import org.sonarsource.sonarlint.core.commons.log.SonarLintLogger;
+import picocli.CommandLine;
+import picocli.CommandLine.Command;
+import picocli.CommandLine.Model.CommandSpec;
+import picocli.CommandLine.Option;
+import picocli.CommandLine.ParameterException;
+import picocli.CommandLine.Parameters;
+import picocli.CommandLine.Spec;
 
-public class ServerMain {
+@Command
+public class ServerMain implements Callable<Integer> {
 
-  private PrintStream out;
-  private PrintStream err;
+  @Parameters(index = "0", description = "The port to which sonarlint should connect to.", defaultValue = "-1")
+  private int deprecatedJsonRpcPort;
 
-  public ServerMain(PrintStream out, PrintStream err) {
-    this.out = out;
-    this.err = err;
+  @Option(names = "-port", description = "The port to which sonarlint should connect to.")
+  private Optional<Integer> jsonRpcPort;
+
+  @Option(names = "-stdio", description = "The actual transport channel will be stdio")
+  private boolean useStdio;
+
+  @Option(names = "-analyzers", arity = "1..*", description = "A list of paths to the analyzer JARs that should be used to analyze the code.")
+  private List<Path> analyzers = new ArrayList<>();
+
+  @Spec
+  private CommandSpec spec;
+
+  public ServerMain() {
   }
 
-  public static void main(String... args) {
-    new ServerMain(System.out, System.err).startLanguageServer(args);
+  public List<Path> getAnalyzers() {
+    return ImmutableList.copyOf(analyzers);
   }
 
-  public void startLanguageServer(String... args) {
-    if (args.length < 1) {
-      err.println("Usage: java -jar sonarlint-server.jar <jsonRpcPort> [file:///path/to/analyzer1.jar [file:///path/to/analyzer2.jar] ...]");
-      exitWithError();
-    }
-    int jsonRpcPort = parsePortArgument(args);
+  @Override
+  public Integer call() throws Exception {
+    validate();
 
-    Collection<URL> analyzers = new ArrayList<>();
-    if (args.length > 1) {
-      for (int i = 1; i < args.length; i++) {
-        try {
-          analyzers.add(new URL(args[i]));
-        } catch (MalformedURLException e) {
-          err.println("Invalid argument at position " + (i + 1) + ". Expected an URL.");
-          e.printStackTrace(err);
-          exitWithError();
-        }
-      }
+    SonarLintLanguageServer server;
+    if (useStdio) {
+      server = SonarLintLanguageServer.byStdio(analyzers);
+    } else {
+      int actualJsonRpcPort = jsonRpcPort.orElse(deprecatedJsonRpcPort);
+      server = SonarLintLanguageServer.bySocket(actualJsonRpcPort, analyzers);
     }
 
-    out.println("Binding to " + jsonRpcPort);
-    try {
-      SonarLintLanguageServer.bySocket(jsonRpcPort, analyzers);
-    } catch (IOException e) {
-      err.println("Unable to connect to the client");
-      e.printStackTrace(err);
-      exitWithError();
-    }
-  }
+    server.waitForShutDown();
 
-  private int parsePortArgument(String... args) {
-    try {
-      return Integer.parseInt(args[0]);
-    } catch (NumberFormatException e) {
-      err.println("Invalid port provided as first parameter");
-      e.printStackTrace(err);
-      exitWithError();
-    }
     return 0;
   }
 
-  void exitWithError() {
-    System.exit(1);
+  private void validate() {
+    if (deprecatedJsonRpcPort > 0 && jsonRpcPort.isPresent()) {
+      throw new ParameterException(spec.commandLine(), "Cannot use positional port argument and option at the same time.");
+    }
+
+    int possibleJsonRpcPort = jsonRpcPort.orElse(deprecatedJsonRpcPort);
+    if (possibleJsonRpcPort > 0 && useStdio) {
+      throw new ParameterException(spec.commandLine(), "Cannot use stdio and socket port at the same time.");
+    }
+    if (possibleJsonRpcPort <= 0 && !useStdio) {
+      throw new ParameterException(spec.commandLine(), "Use -stdio or -jsonRpcPort.");
+    }
+
+    if (!useStdio && deprecatedJsonRpcPort > 0) {
+      SonarLintLogger.get().warn("Warning: using deprecated positional parameter jsonRpcPort. Please, use -jsonRpcPort instead.");
+    }
+  }
+
+  public static void main(String... args) {
+    int exitCode = new CommandLine(new ServerMain()).execute(args);
+    System.exit(exitCode);
   }
 
 }

@@ -1,6 +1,6 @@
 /*
  * SonarLint Language Server
- * Copyright (C) 2009-2020 SonarSource SA
+ * Copyright (C) 2009-2023 SonarSource SA
  * mailto:info AT sonarsource DOT com
  *
  * This program is free software; you can redistribute it and/or
@@ -21,7 +21,7 @@ package org.sonarsource.sonarlint.ls.connected;
 
 import org.junit.jupiter.api.Test;
 import org.sonarsource.sonarlint.core.client.api.connected.ConnectedSonarLintEngine;
-import org.sonarsource.sonarlint.core.client.api.connected.ProjectBinding;
+import org.sonarsource.sonarlint.core.serverconnection.ProjectBinding;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
@@ -29,13 +29,13 @@ import static org.mockito.Mockito.mock;
 class ProjectBindingWrapperTests {
 
   @Test
-  public void test_getters() {
-    ProjectBinding binding = new ProjectBinding("projectKey", "prefix", "idePrefix");
-    ConnectedSonarLintEngine engine = mock(ConnectedSonarLintEngine.class);
-    ServerIssueTrackerWrapper issueTrackerWrapper = mock(ServerIssueTrackerWrapper.class);
-    ProjectBindingWrapper underTest = new ProjectBindingWrapper("serverId", binding, engine, issueTrackerWrapper);
+  void test_getters() {
+    var binding = new ProjectBinding("projectKey", "prefix", "idePrefix");
+    var engine = mock(ConnectedSonarLintEngine.class);
+    var issueTrackerWrapper = mock(ServerIssueTrackerWrapper.class);
+    var underTest = new ProjectBindingWrapper("serverId", binding, engine, issueTrackerWrapper);
 
-    assertThat(underTest.getServerId()).isEqualTo("serverId");
+    assertThat(underTest.getConnectionId()).isEqualTo("serverId");
     assertThat(underTest.getBinding()).isEqualTo(binding);
     assertThat(underTest.getEngine()).isEqualTo(engine);
     assertThat(underTest.getServerIssueTracker()).isEqualTo(issueTrackerWrapper);
